@@ -114,10 +114,6 @@ static float cmagsquaredf(const float complex a) {
     return crealf(a) * crealf(a) + cimagf(a) * cimagf(a);
 }
 
-static unsigned char hex_byte(unsigned char c) {
-    return (c >= 10) ? ('A' + (c - 10)) : ('0' + c);
-}
-
 int main(void) {
     set_sys_clock_48mhz();
 
@@ -150,11 +146,6 @@ int main(void) {
     float complex * restrict const scratch_out = malloc(sizeof(float complex) * T / 2);
     float * restrict const window = malloc(sizeof(float) * (T / 2 + 1));
     float * restrict const spectrum_power = malloc(sizeof(float) * F);
-
-    /* hex-encoded spectrum output, plus \r\n */
-    char * restrict const out_line = malloc(2 * F + 2);
-    out_line[2 * F + 0] = '\r';
-    out_line[2 * F + 1] = '\n';
 
     /* hann window, exploiting symmetry, accounting for averaging over time, normalized
      such that a full scale real-valued sine wave will have a -3.0103 dB response */
@@ -221,12 +212,11 @@ int main(void) {
                 const float dB = 10.0f * log10f(spectrum_power[iw]);
                 const uint8_t quantized = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
 
-                out_line[2 * iw + 0] = hex_byte(quantized / 16U);
-                out_line[2 * iw + 1] = hex_byte(quantized % 16U);
+                dprintf(1, "%02x", quantized);
             }
 
-            /* emit rest of line to stdout (via usb in this case) */
-            write(1, (void *)out_line, 2 * F + 2);
+            /* finish line */
+            dprintf(1, "\r\n");
         }
     }
 
