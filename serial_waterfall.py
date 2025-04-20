@@ -51,11 +51,19 @@ def open_tty_as_stdin(path, speed=None):
     os.dup2(fd_tty, 0)
     os.close(fd_tty)
 
+window_closed = False
+def on_close(event):
+    global window_closed
+    window_closed = True
+
 def child_thread(main_thread_work):
+    global window_closed
     scale = 0.75
     offset = -256 * scale
 
     for line in sys.stdin:
+        if window_closed: break
+
         df_text, dt_text, levels_text = line.split(',')
         levels = np.array(bytearray.fromhex(levels_text)) * scale + offset
 
@@ -84,6 +92,8 @@ def main():
 
     # create an empty figure but don't show it yet
     fig = plt.figure()
+
+    fig.canvas.mpl_connect('close_event', on_close)
 
     # thread-safe fifo between rx thread and main thread
     main_thread_work = queue.Queue()
