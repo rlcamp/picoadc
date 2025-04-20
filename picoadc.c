@@ -192,15 +192,18 @@ int main(void) {
         const float complex nyquist_bin = cimagf(scratch_out[0]);
         scratch_out[0] = crealf(scratch_out[0]);
 
-        /* possibly reset power accumulator */
-        if (0 == iframe_averaged)
-            memset(spectrum_power, 0, sizeof(float) * F);
-
         /* accumulate power */
-        for (size_t iw = 0; iw < F - 1; iw++)
-            spectrum_power[iw] += cmagsquaredf(scratch_out[iw]);
+        if (0 == iframe_averaged) {
+            for (size_t iw = 0; iw < F - 1; iw++)
+                spectrum_power[iw] = cmagsquaredf(scratch_out[iw]);
 
-        if (T / 2 < F) spectrum_power[T / 2] += cmagsquaredf(nyquist_bin);
+            if (T / 2 < F) spectrum_power[T / 2] += cmagsquaredf(nyquist_bin);
+        } else {
+            for (size_t iw = 0; iw < F - 1; iw++)
+                spectrum_power[iw] += cmagsquaredf(scratch_out[iw]);
+
+            if (T / 2 < F) spectrum_power[T / 2] += cmagsquaredf(nyquist_bin);
+        }
 
         iframe_averaged++;
         if (fft_frames_per_average == iframe_averaged) {
