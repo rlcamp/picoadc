@@ -47,8 +47,12 @@ void usb_out_chars(const unsigned char * buf, size_t length) {
     }
 }
 
+/* note this is NOT volatile because we want to access it as a regular variable from within
+ ISR context where it is safe to do so, and do explicitly volatile reads of it otherwise */
 size_t ichunk_written = 0;
-static int16_t adc_chunks[4][SAMPLES_PER_CHUNK];
+
+/* the actual big ring buffer, divided into 4 chunks */
+static int16_t adc_chunks[CHUNKS][SAMPLES_PER_CHUNK];
 
 /* this function gets called once per chunk, i.e. four times per full ring buffer */
 void __scratch_y("") adc_dma_irq_handler(void) {
@@ -133,7 +137,7 @@ int main(void) {
 
     /* inner loop over chunks of data */
     while (tud_cdc_connected()) {
-        /* wait until there is a new chunk of data */
+        /* wait until there is a new chunk of data. note the forced volatile read */
         while (ichunk_read == *(volatile size_t *)&ichunk_written) yield();
 
         const int16_t * restrict chunk = adc_chunks[ichunk_read % CHUNKS];
