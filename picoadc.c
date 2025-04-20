@@ -150,7 +150,7 @@ int main(void) {
     /* hann window, exploiting symmetry, accounting for averaging over time, normalized
      such that a full scale real-valued sine wave will have a -3.0103 dB response */
     for (size_t it = 0; it < T / 2 + 1; it++)
-        window[it] = (1.0f - cosf(2.0f * (float)M_PI * (float)it / T)) * (float)M_SQRT2 / (T * 32767.0f * sqrtf(fft_frames_per_average));
+        window[it] = (1.0f - cosf(2.0f * (float)M_PI * (float)it / T)) * (float)M_SQRT2 / (T * 2047.0f * sqrtf(fft_frames_per_average));
 
     size_t ichunk_read = 0;
     size_t iframe_averaged = 0;
