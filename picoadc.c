@@ -1,3 +1,4 @@
+#include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include "hardware/irq.h"
 #include "hardware/adc.h"
@@ -5,7 +6,13 @@
 #include "hardware/pwm.h"
 #include "RP2350.h"
 
-#include <tusb.h>
+#include "fft_anywhere.h"
+
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdio.h>
 
 /* as a diagnostic we will output a 2 kHz full scale square wave on this pin */
 #define PWM_PIN 22
@@ -29,22 +36,7 @@ unsigned long sample_rate_denominator = 1500;
 
 void yield(void) {
     /* we could do context switching here for cooperative multitasking if we wanted */
-    __dsb();
-    __wfe();
-}
-
-void usb_out_chars(const unsigned char * buf, size_t length) {
-    while (length) {
-        const size_t available = tud_cdc_write_available();
-        const size_t write_now = length < available ? length : available;
-        if (write_now) {
-            const size_t written_now = tud_cdc_write(buf, write_now);
-            length -= written_now;
-            buf += written_now;
-        }
-        tud_task();
-        tud_cdc_write_flush();
-    }
+    asm volatile("dsb; wfe");
 }
 
 /* note this is NOT volatile because we want to access it as a regular variable from within
@@ -118,40 +110,122 @@ static void adc_dma_init(void) {
     adc_run(true);
 }
 
+static float cmagsquaredf(const float complex a) {
+    return crealf(a) * crealf(a) + cimagf(a) * cimagf(a);
+}
+
+static unsigned char hex_byte(unsigned char c) {
+    return (c >= 10) ? ('A' + (c - 10)) : ('0' + c);
+}
+
 int main(void) {
     set_sys_clock_48mhz();
 
     init_test_signal();
 
-    tusb_init();
-
-    /* this will block until the usb device is actually opened on the host end */
-    while (!tud_cdc_connected()) tud_task();
-
-    /* wtf */
-    for (uint32_t t0 = time_us_32(); time_us_32() - t0 < 50000; ) tud_task();
+    stdio_usb_init();
+    while (!stdio_usb_connected()) yield();
 
     adc_dma_init();
 
+    /* fft length */
+    const size_t T = 2 * SAMPLES_PER_CHUNK;
+
+    /* number of kept frequency bins */
+    const size_t F = T / 2 + 1;
+
+    const float fs = SAMPLE_RATE_NUMERATOR / (float)sample_rate_denominator;
+
+    /* number of fft frames to average for each line of output pixels */
+    const float dt_desired = 0.0f; /* seconds */
+    const size_t fft_frames_per_average = fmaxf(1.0f, dt_desired * fs / (0.5f * T) + 0.5f);
+
+    const float df = fs / T, dt = 0.5f * fft_frames_per_average * T / fs;
+
+    /* plan an r2c fft */
+    struct planned_real_fft * const plan = plan_real_fft_of_length(T);
+
+    /* allocate a bunch of buffers */
+    float * restrict const scratch_in = malloc(sizeof(float) * T);
+    float complex * restrict const scratch_out = malloc(sizeof(float complex) * T / 2);
+    float * restrict const window = malloc(sizeof(float) * (T / 2 + 1));
+    float * restrict const spectrum_power = malloc(sizeof(float) * F);
+
+    /* hex-encoded spectrum output, plus \r\n */
+    char * restrict const out_line = malloc(2 * F + 2);
+    out_line[2 * F + 0] = '\r';
+    out_line[2 * F + 1] = '\n';
+
+    /* hann window, exploiting symmetry, accounting for averaging over time, normalized
+     such that a full scale real-valued sine wave will have a -3.0103 dB response */
+    for (size_t it = 0; it < T / 2 + 1; it++)
+        window[it] = (1.0f - cosf(2.0f * (float)M_PI * (float)it / T)) * (float)M_SQRT2 / (T * 32767.0f * sqrtf(fft_frames_per_average));
+
     size_t ichunk_read = 0;
+    size_t iframe_averaged = 0;
+
+    /* output will be on [-192, 0) dB relative to full scale, in 0.75 dB increments */
+    const float out_scale = 0.75f;
+    const float out_offset = -256.0f * out_scale;
+    const float one_over_out_scale = 1.0f / out_scale;
 
     /* inner loop over chunks of data */
-    while (tud_cdc_connected()) {
+    while (stdio_usb_connected()) {
         /* wait until there is a new chunk of data. note the forced volatile read */
         while (ichunk_read == *(volatile size_t *)&ichunk_written) yield();
 
-        const int16_t * restrict chunk = adc_chunks[ichunk_read % CHUNKS];
+        /* get pointers to last two framehalves and advance the read cursor */
+        const int16_t * restrict chunk_prev = adc_chunks[(ichunk_read - 1) % CHUNKS];
+        const int16_t * restrict chunk_this = adc_chunks[(ichunk_read + 0) % CHUNKS];
         ichunk_read++;
 
-        usb_out_chars((void *)chunk, sizeof(int16_t) * SAMPLES_PER_CHUNK);
-        tud_task();
+        /* copy samples from ring buffer, promote to floating point, multiply by window */
+        for (size_t it_frame = 0, it_framehalf = 0; it_frame < T / 2; it_frame++, it_framehalf++)
+            scratch_in[it_frame] = chunk_prev[it_framehalf] * window[it_frame];
+        for (size_t it_frame = T / 2, it_framehalf = 0; it_frame < T; it_frame++, it_framehalf++)
+            scratch_in[it_frame] = chunk_this[it_framehalf] * window[T / 2 - it_framehalf];
+
+        /* do the r2c fft of the most recent two framehalves of samples */
+        fft_evaluate_real(scratch_out, scratch_in, plan);
+
+        /* unpack dc and nyquist bins */
+        const float complex nyquist_bin = cimagf(scratch_out[0]);
+        scratch_out[0] = crealf(scratch_out[0]);
+
+        /* possibly reset power accumulator */
+        if (0 == iframe_averaged)
+            memset(spectrum_power, 0, sizeof(float) * F);
+
+        /* accumulate power */
+        for (size_t iw = 0; iw < F - 1; iw++)
+            spectrum_power[iw] += cmagsquaredf(scratch_out[iw]);
+
+        if (T / 2 < F) spectrum_power[T / 2] += cmagsquaredf(nyquist_bin);
+
+        iframe_averaged++;
+        if (fft_frames_per_average == iframe_averaged) {
+            iframe_averaged = 0;
+
+            /* dc and nyquist bins need to be weighted down to account for r2c fft */
+            spectrum_power[0] *= 0.5f;
+            if (T / 2 < F) spectrum_power[T / 2] *= 0.5f;
+
+            /* emit beginning of line to stdout */
+            dprintf(1, "%.5f,%.5f,", df, dt);
+
+            /* map power to eight bit log scale values */
+            for (size_t iw = 0; iw < F; iw++) {
+                const float dB = 10.0f * log10f(spectrum_power[iw]);
+                const uint8_t quantized = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
+
+                out_line[2 * iw + 0] = hex_byte(quantized / 16U);
+                out_line[2 * iw + 1] = hex_byte(quantized % 16U);
+            }
+
+            /* emit rest of line to stdout (via usb in this case) */
+            write(1, (void *)out_line, 2 * F + 2);
+        }
     }
-
-    /* this should be sufficient but it isn't */
-    while (tud_cdc_write_flush()) tud_task();
-
-    /* annoyingly we need to wait here before resetting */
-    for (uint32_t t0 = time_us_32(); time_us_32() - t0 < 50000; ) tud_task();
 
     NVIC_SystemReset();
 }

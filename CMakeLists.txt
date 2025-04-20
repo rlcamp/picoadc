@@ -20,6 +20,7 @@ pico_sdk_init()
 # rest of your project
 add_executable(picoadc
     picoadc.c
+    fft_anywhere.c
 )
 
 # add some warning flags
