@@ -188,7 +188,7 @@ int main(void) {
             for (size_t iw = 0; iw < F - 1; iw++)
                 spectrum_power[iw] = cmagsquaredf(scratch_out[iw]);
 
-            if (T / 2 < F) spectrum_power[T / 2] += cmagsquaredf(nyquist_bin);
+            if (T / 2 < F) spectrum_power[T / 2] = cmagsquaredf(nyquist_bin);
         } else {
             for (size_t iw = 0; iw < F - 1; iw++)
                 spectrum_power[iw] += cmagsquaredf(scratch_out[iw]);
