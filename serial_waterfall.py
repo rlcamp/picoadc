@@ -93,11 +93,11 @@ def main():
 
     # event loop which dequeues work from other threads that must be done on main thread
     while True:
-        if main_thread_work.empty():
-            # there must be a better way to do this
-            fig.canvas.start_event_loop(0.016)
+        try:
+            packet = main_thread_work.get(timeout=0.016)
+        except queue.Empty:
+            fig.canvas.flush_events()
             continue
-        packet = main_thread_work.get()
         if packet is None: break
 
         # do this setup stuff on the first input
