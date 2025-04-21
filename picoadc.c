@@ -23,8 +23,10 @@
 /* we will use dma channels 0 and 1 */
 #define IDMA_ADC_BASE 0
 
+#define RING_BUFFER_WRAP_BITS 13
+
 /* total number of bytes of sram used for ring buffer */
-#define RING_BUFFER_SIZE 8192
+#define RING_BUFFER_SIZE (1U << RING_BUFFER_WRAP_BITS)
 
 /* number of chunks to use, must be a power of two, must be at least 2 for minimum
  functionality, must be at least 3 for 50% overlapped fft functionality */
@@ -43,20 +45,15 @@ void yield(void) {
  ISR context where it is safe to do so, and do explicitly volatile reads of it otherwise */
 size_t ichunk_written = 0;
 
-/* the actual big ring buffer, divided into 4 chunks */
+/* the actual big ring buffer, divided into 4 chunks, aligned to its own total size */
+__attribute((aligned(RING_BUFFER_SIZE)))
 static int16_t adc_chunks[CHUNKS][SAMPLES_PER_CHUNK];
 
 /* this function gets called once per chunk, i.e. four times per full ring buffer */
-void __scratch_y("") adc_dma_irq_handler(void) {
-    const unsigned idma_channel = IDMA_ADC_BASE + (ichunk_written % 2);
-    dma_channel_hw_t * dma_channel = &dma_hw->ch[idma_channel];
-    dma_hw->intr = 1U << idma_channel;
+void __scratch_y("") adc_dma_irq_handler_single(void) {
+    dma_hw->intr = 1U << IDMA_ADC_BASE;
 
     ichunk_written++;
-
-    /* reconfigure the channel that just finished */
-    dma_channel->write_addr = (uintptr_t)&adc_chunks[(ichunk_written + 2) % CHUNKS];
-    dma_channel->transfer_count = SAMPLES_PER_CHUNK;
     __DSB();
 }
 
@@ -84,29 +81,27 @@ static void adc_dma_init(void) {
 
     adc_set_clkdiv(sample_rate_denominator - 1);
 
-    for (size_t iconfig = 0; iconfig < 2; iconfig++) {
-        dma_channel_config cfg = dma_channel_get_default_config(IDMA_ADC_BASE + iconfig);
-        channel_config_set_chain_to(&cfg, IDMA_ADC_BASE + !iconfig);
-        channel_config_set_dreq(&cfg, DREQ_ADC);
-        channel_config_set_read_increment(&cfg, false);
-        channel_config_set_write_increment(&cfg, true);
-        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_16);
+    dma_channel_config cfg = dma_channel_get_default_config(IDMA_ADC_BASE);
+    channel_config_set_dreq(&cfg, DREQ_ADC);
+    channel_config_set_read_increment(&cfg, false);
+    channel_config_set_write_increment(&cfg, true);
+    channel_config_set_ring(&cfg, true, RING_BUFFER_WRAP_BITS);
+    channel_config_set_transfer_data_size(&cfg, DMA_SIZE_16);
 
-        dma_channel_configure(IDMA_ADC_BASE + iconfig,
-                              &cfg,
-                              &adc_chunks[iconfig],
-                              &adc_hw->fifo,
-                              SAMPLES_PER_CHUNK,
-                              false);
-    }
+    dma_channel_configure(IDMA_ADC_BASE,
+                          &cfg,
+                          &adc_chunks[0],
+                          &adc_hw->fifo,
+                          SAMPLES_PER_CHUNK | (1U << 28), /* enable self retrigger */
+                          false);
 
-    dma_hw->ints0 |= (1u << (IDMA_ADC_BASE + 0)) | (1u << (IDMA_ADC_BASE + 1));
-    dma_hw->inte0 |= (1u << (IDMA_ADC_BASE + 0)) | (1u << (IDMA_ADC_BASE + 1));
+    dma_hw->ints0 |= 1u << IDMA_ADC_BASE;
+    dma_hw->inte0 |= 1u << IDMA_ADC_BASE;
     __DSB();
-    irq_set_exclusive_handler(DMA_IRQ_0, adc_dma_irq_handler);
+    irq_set_exclusive_handler(DMA_IRQ_0, adc_dma_irq_handler_single);
     irq_set_enabled(DMA_IRQ_0, true);
 
-    dma_channel_start(IDMA_ADC_BASE + 0);
+    dma_channel_start(IDMA_ADC_BASE);
     adc_run(true);
 }
 
