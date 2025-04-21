@@ -129,7 +129,7 @@ int main(void) {
     const float fs = SAMPLE_RATE_NUMERATOR / (float)sample_rate_denominator;
 
     /* number of fft frames to average for each line of output pixels */
-    const float dt_desired = 0.0f; /* seconds */
+    const float dt_desired = 1.0f; /* seconds */
     const size_t fft_frames_per_average = fmaxf(1.0f, dt_desired * fs / (0.5f * T) + 0.5f);
 
     const float df = fs / T, dt = 0.5f * fft_frames_per_average * T / fs;
@@ -142,6 +142,9 @@ int main(void) {
     float complex * restrict const scratch_out = malloc(sizeof(float complex) * T / 2);
     float * restrict const window = malloc(sizeof(float) * (T / 2 + 1));
     float * restrict const spectrum_power = malloc(sizeof(float) * F);
+
+    const size_t outlen = sizeof("000.00000,000.00000,\r\n") + 2 * F;
+    char * restrict const line_out = malloc(outlen);
 
     /* hann window, exploiting symmetry, accounting for averaging over time, normalized
      such that a full scale real-valued sine wave will have a -3.0103 dB response */
@@ -201,19 +204,22 @@ int main(void) {
             spectrum_power[0] *= 0.5f;
             if (T / 2 < F) spectrum_power[T / 2] *= 0.5f;
 
-            /* emit beginning of line to stdout */
-            dprintf(1, "%.5f,%.5f,", df, dt);
+            /* write into first part of output line */
+            size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
 
             /* map power to eight bit log scale values */
             for (size_t iw = 0; iw < F; iw++) {
                 const float dB = 10.0f * log10f(spectrum_power[iw]);
                 const uint8_t quantized = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
 
-                dprintf(1, "%02x", quantized);
+                off += snprintf(line_out + off, outlen - off, "%02x", quantized);
             }
 
             /* finish line */
-            dprintf(1, "\r\n");
+            off += snprintf(line_out + off, outlen - off, "\r\n");
+
+            /* emit line to usb cdc serial */
+            stdio_put_string(line_out, off, false, false);
         }
     }
 
