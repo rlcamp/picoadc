@@ -20,6 +20,7 @@ pico_sdk_init()
 # rest of your project
 add_executable(picoadc
     picoadc.c
+    usb_descriptors.c
     fft_anywhere.c
 )
 
@@ -31,11 +32,13 @@ set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS}  -Wall -Wextra -Wshadow")
 # which make them insanely slow and power hungry for no practical benefit
 set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS} -O3 -ffinite-math-only -fno-signed-zeros -fno-rounding-math -fno-trapping-math -fno-math-errno -fcx-limited-range")
 
-# pull in common dependencies
-target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_pwm)
+# make sure TinyUSB can find tusb_config.h
+target_include_directories(picoadc PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
-pico_enable_stdio_usb(picoadc 1)
-target_compile_definitions(picoadc PRIVATE PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=-1 )
+# pull in common dependencies
+target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_pwm tinyusb_board tinyusb_device)
+
+pico_enable_stdio_usb(picoadc 0)
 
 # create map/bin/hex/uf2 file in addition to ELF.
 pico_add_extra_outputs(picoadc)

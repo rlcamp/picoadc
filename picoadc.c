@@ -1,10 +1,13 @@
-#include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include "hardware/irq.h"
 #include "hardware/adc.h"
 #include "hardware/dma.h"
 #include "hardware/pwm.h"
 #include "RP2350.h"
+
+#include "pico/bootrom.h"
+#include "bsp/board_api.h"
+#include <tusb.h>
 
 #include "fft_anywhere.h"
 
@@ -110,15 +113,38 @@ static float cmagsquaredf(const float complex a) {
     return crealf(a) * crealf(a) + cimagf(a) * cimagf(a);
 }
 
+void tud_cdc_line_coding_cb(__unused uint8_t itf, cdc_line_coding_t const * p_line_coding) {
+    if (1200 == p_line_coding->bit_rate)
+        rom_reset_usb_boot_extra(-1, 0, false);
+}
+
+void write_to_usb_cdc(const char * buf, size_t length) {
+    while (length && tud_cdc_connected()) {
+        const size_t available = tud_cdc_write_available();
+        const size_t write_now = length < available ? length : available;
+        if (write_now) {
+            const size_t written_now = tud_cdc_write(buf, write_now);
+            length -= written_now;
+            buf += written_now;
+        }
+        tud_task();
+        tud_cdc_write_flush();
+    }
+    tud_task();
+}
+
 int main(void) {
     set_sys_clock_48mhz();
 
-    init_test_signal();
-
-    stdio_usb_init();
-    while (!stdio_usb_connected()) yield();
-
     adc_dma_init();
+
+    board_init();
+    tusb_init();
+
+    if (board_init_after_tusb)
+        board_init_after_tusb();
+
+    init_test_signal();
 
     /* fft length */
     const size_t T = 2 * SAMPLES_PER_CHUNK;
@@ -129,7 +155,7 @@ int main(void) {
     const float fs = SAMPLE_RATE_NUMERATOR / (float)sample_rate_denominator;
 
     /* number of fft frames to average for each line of output pixels */
-    const float dt_desired = 1.0f; /* seconds */
+    const float dt_desired = 0.0f; /* seconds */
     const size_t fft_frames_per_average = fmaxf(1.0f, dt_desired * fs / (0.5f * T) + 0.5f);
 
     const float df = fs / T, dt = 0.5f * fft_frames_per_average * T / fs;
@@ -151,6 +177,10 @@ int main(void) {
     for (size_t it = 0; it < T / 2 + 1; it++)
         window[it] = (1.0f - cosf(2.0f * (float)M_PI * (float)it / T)) * (float)M_SQRT2 / (T * 2047.0f * sqrtf(fft_frames_per_average));
 
+    /* this will block until the usb device is actually opened on the host end */
+    while (tud_task(), !tud_cdc_connected());
+    tud_task();
+
     /* initially we will pretend we are "caught up" with wherever the stream is now */
     size_t ichunk_read = *(volatile size_t *)&ichunk_written;
     size_t iframe_averaged = 0;
@@ -161,9 +191,12 @@ int main(void) {
     const float one_over_out_scale = 1.0f / out_scale;
 
     /* inner loop over chunks of data */
-    while (stdio_usb_connected()) {
+    while (tud_cdc_connected()) {
         /* wait until there is a new chunk of data. note the forced volatile read */
-        while (ichunk_read == *(volatile size_t *)&ichunk_written) yield();
+        while (ichunk_read == *(volatile size_t *)&ichunk_written) {
+            tud_task();
+            yield();
+        }
 
         /* get pointers to last two framehalves and advance the read cursor */
         const int16_t * restrict chunk_prev = adc_chunks[(ichunk_read - 1) % CHUNKS];
@@ -219,7 +252,7 @@ int main(void) {
             off += snprintf(line_out + off, outlen - off, "\r\n");
 
             /* emit line to usb cdc serial */
-            stdio_put_string(line_out, off, false, false);
+            write_to_usb_cdc(line_out, off);
         }
     }
 
