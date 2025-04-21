@@ -148,7 +148,8 @@ int main(void) {
     for (size_t it = 0; it < T / 2 + 1; it++)
         window[it] = (1.0f - cosf(2.0f * (float)M_PI * (float)it / T)) * (float)M_SQRT2 / (T * 2047.0f * sqrtf(fft_frames_per_average));
 
-    size_t ichunk_read = 0;
+    /* initially we will pretend we are "caught up" with wherever the stream is now */
+    size_t ichunk_read = *(volatile size_t *)&ichunk_written;
     size_t iframe_averaged = 0;
 
     /* output will be on [-192, 0) dB relative to full scale, in 0.75 dB increments */
