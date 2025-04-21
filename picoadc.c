@@ -20,9 +20,9 @@
 /* adc input pin number is 26 plus this value */
 #define ADC_CHANNEL 1
 
-/* we will use dma channels 0 and 1 */
 #define IDMA_ADC 0
 
+/* 2^this is the total number of bytes of sram used for the big ring buffer */
 #define RING_BUFFER_WRAP_BITS 13
 
 /* total number of bytes of sram used for ring buffer */
@@ -51,7 +51,7 @@ static int16_t adc_chunks[CHUNKS][SAMPLES_PER_CHUNK];
 
 /* this function gets called once per chunk, i.e. four times per full ring buffer */
 void __scratch_y("") adc_dma_irq_handler_single(void) {
-    dma_hw->intr = 1U << IDMA_ADC;
+    dma_hw->ints0 = 1U << IDMA_ADC;
 
     ichunk_written++;
     __DSB();
@@ -81,6 +81,7 @@ static void adc_dma_init(void) {
 
     adc_set_clkdiv(sample_rate_denominator - 1);
 
+    dma_channel_claim(IDMA_ADC);
     dma_channel_config cfg = dma_channel_get_default_config(IDMA_ADC);
     channel_config_set_dreq(&cfg, DREQ_ADC);
     channel_config_set_read_increment(&cfg, false);
@@ -95,8 +96,8 @@ static void adc_dma_init(void) {
                           SAMPLES_PER_CHUNK | (1U << 28), /* enable self retrigger */
                           false);
 
-    dma_hw->ints0 |= 1u << IDMA_ADC;
-    dma_hw->inte0 |= 1u << IDMA_ADC;
+    dma_channel_acknowledge_irq0(IDMA_ADC);
+    dma_channel_set_irq0_enabled(IDMA_ADC, true);
     __DSB();
     irq_set_exclusive_handler(DMA_IRQ_0, adc_dma_irq_handler_single);
     irq_set_enabled(DMA_IRQ_0, true);
