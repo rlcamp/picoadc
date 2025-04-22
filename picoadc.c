@@ -5,7 +5,6 @@
 #include "hardware/pwm.h"
 #include "RP2350.h"
 
-#include "pico/bootrom.h"
 #include "bsp/board_api.h"
 #include <tusb.h>
 
@@ -113,25 +112,7 @@ static float cmagsquaredf(const float complex a) {
     return crealf(a) * crealf(a) + cimagf(a) * cimagf(a);
 }
 
-void tud_cdc_line_coding_cb(__unused uint8_t itf, cdc_line_coding_t const * p_line_coding) {
-    if (1200 == p_line_coding->bit_rate)
-        rom_reset_usb_boot_extra(-1, 0, false);
-}
-
-void write_to_usb_cdc(const char * buf, size_t length) {
-    while (length && tud_cdc_connected()) {
-        const size_t available = tud_cdc_write_available();
-        const size_t write_now = length < available ? length : available;
-        if (write_now) {
-            const size_t written_now = tud_cdc_write(buf, write_now);
-            length -= written_now;
-            buf += written_now;
-        }
-        tud_task();
-        tud_cdc_write_flush();
-    }
-    tud_task();
-}
+extern void write_to_usb_cdc(const char * buf, size_t length);
 
 int main(void) {
     set_sys_clock_48mhz();

@@ -1,3 +1,5 @@
+/* begin stuff copied from tinyusb examples */
+
 /*
  * The MIT License (MIT)
  *
@@ -172,4 +174,28 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
   _desc_str[0] = (uint16_t) ((TUSB_DESC_STRING << 8) | (2 * chr_count + 2));
 
   return _desc_str;
+}
+
+/* end stuff copied from tinyusb examples */
+
+#include "pico/bootrom.h"
+
+void tud_cdc_line_coding_cb(__unused uint8_t itf, cdc_line_coding_t const * p_line_coding) {
+    if (1200 == p_line_coding->bit_rate)
+        rom_reset_usb_boot_extra(-1, 0, false);
+}
+
+void write_to_usb_cdc(const char * buf, size_t length) {
+    while (length && tud_cdc_connected()) {
+        const size_t available = tud_cdc_write_available();
+        const size_t write_now = length < available ? length : available;
+        if (write_now) {
+            const size_t written_now = tud_cdc_write(buf, write_now);
+            length -= written_now;
+            buf += written_now;
+        }
+        tud_task();
+        tud_cdc_write_flush();
+    }
+    tud_task();
 }
