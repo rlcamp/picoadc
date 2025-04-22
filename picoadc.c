@@ -15,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <assert.h>
 
 /* as a diagnostic we will output a 2 kHz full scale square wave on this pin */
 #define PWM_PIN 22
@@ -30,10 +31,15 @@
 /* total number of bytes of sram used for ring buffer */
 #define RING_BUFFER_SIZE (1U << RING_BUFFER_WRAP_BITS)
 
-/* number of chunks to use, must be a power of two, must be at least 2 for minimum
- functionality, must be at least 3 for 50% overlapped fft functionality */
+/* when we finish collecting chunk N, we use chunk N-1 and N to affect 50% overlapped FFT
+ inputs, while chunk N+1 is collected. therefore we need at least three chunks, and we also
+ have a power of two alignment requirement, therefore the minimum number of chunks is 4.
+ higher numbers of chunks allow the main thread to momentarily fall farther behind real
+ time as long as it can catch back up on average */
 #define CHUNKS 4
 #define SAMPLES_PER_CHUNK (RING_BUFFER_SIZE / (CHUNKS * sizeof(int16_t)))
+static_assert(CHUNKS >= 4 && !(CHUNKS & (CHUNKS - 1)),
+              "number of chunks must be a power of two, at least 4");
 
 #define SAMPLE_RATE_NUMERATOR 48000000ULL
 unsigned long sample_rate_denominator = 1500;
