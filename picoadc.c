@@ -25,7 +25,7 @@
 #define IDMA_ADC 0
 
 /* 2^this is the total number of bytes of sram used for the big ring buffer */
-#define RING_BUFFER_WRAP_BITS 13
+#define RING_BUFFER_WRAP_BITS 12
 
 /* total number of bytes of sram used for ring buffer */
 #define RING_BUFFER_SIZE (1U << RING_BUFFER_WRAP_BITS)
