@@ -280,17 +280,20 @@ int main(void) {
 
             /* attempt to find a tone as a visual diagnostic when no screen present */
             do {
-                /* ignore DC bin and its shoulder */
-                const size_t iw_start = 2;
+                /* consider an SNR threshold of 12.04 dB within that window */
+                const float one_over_threshold = 1.0f / 16.0f;
 
-                /* find the loudest local maximum, ignoring the first and last bins */
+                /* consider a local window 9 bins wide, centered on the bin under test */
+                const size_t W = 9;
+
+                /* find the loudest local maximum */
                 size_t iw_max = SIZE_MAX;
-                for (size_t iw = iw_start; iw < F - 1; iw++)
+                for (size_t iw = W / 2; iw < F - W / 2; iw++)
                     if ((SIZE_MAX == iw_max || spectrum_power[iw] > spectrum_power[iw_max]) &&
                         spectrum_power[iw] > spectrum_power[iw - 1] &&
                         spectrum_power[iw] > spectrum_power[iw + 1]) iw_max = iw;
 
-                /* if no local maxima were found in the inspected bins, return zero Hz */
+                /* if no local maxima were found in the inspected bins, ignore this frame */
                 if (SIZE_MAX == iw_max) break;
 
                 /* otherwise, estimate the actual frequency to sub-bin precision using parabolic peak fit */
@@ -302,10 +305,18 @@ int main(void) {
                 const float f = (iw_max + p) * df;
                 const float m = 10.0f * log10f(peak) - 0.25f * (alpha - gamma) * p;
 
-                (void)m; /* don't do anything with m yet, but suppress warning that we haven't */
+                /* we can quickly determine whether the peak is louder than the local median
+                 by at least some threshold, by counting how many local bins are louder than
+                 the peak divided by that threshold, without actually calculating the median */
+                const float limit = m * one_over_threshold;
 
-                /* turn on an LED when the dominant tone is in a certain frequency range */
-                if (f > 1950.0f && f < 2050.0f)
+                size_t bins_above_limit = 0;
+                for (int ioffset = -W / 2; ioffset < (int)W - (int)W / 2; ioffset++)
+                    if (spectrum_power[iw_max + ioffset] > limit) bins_above_limit++;
+
+                /* turn on an LED when the dominant tone is in a certain frequency range,
+                 and is louder than the local median by at least the threshold */
+                if (f > 1950.0f && f < 2050.0f && bins_above_limit <= W / 2)
                     gpio_put(PICO_DEFAULT_LED_PIN, 1);
                 else
                     gpio_put(PICO_DEFAULT_LED_PIN, 0);
