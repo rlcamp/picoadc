@@ -163,6 +163,7 @@ int main(void) {
     adc_dma_init();
 
     const char enable_usb = 1;
+    const char enable_serial = 1;
 
     if (enable_usb) {
         board_init();
@@ -173,7 +174,8 @@ int main(void) {
     }
 
     /* init stdout/stderr on uart tx, do not enable uart rx */
-    stdio_uart_init_full(uart_default, 115200, PICO_DEFAULT_UART_TX_PIN, -1);
+    if (enable_serial)
+        stdio_uart_init_full(uart_default, 115200, PICO_DEFAULT_UART_TX_PIN, -1);
 
     init_test_signal();
 
@@ -273,27 +275,30 @@ int main(void) {
             spectrum_power[0] *= 0.5f;
             if (T / 2 < F) spectrum_power[T / 2] *= 0.5f;
 
-            /* write into first part of output line */
-            size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
+            if (enable_usb || enable_serial) {
+                /* write into first part of output line */
+                size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
 
-            /* map power to eight bit log scale values */
-            for (size_t iw = 0; iw < F; iw++) {
-                const float dB = 10.0f * log10f(spectrum_power[iw]);
-                spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
+                /* map power to eight bit log scale values */
+                for (size_t iw = 0; iw < F; iw++) {
+                    const float dB = 10.0f * log10f(spectrum_power[iw]);
+                    spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
+                }
+
+                base64_encode(line_out + off, spectrum_quantized, F);
+                off += strlen_spectrum_encoded;
+
+                /* finish line */
+                off += snprintf(line_out + off, outlen - off, "\r\n");
+
+                /* emit line to usb cdc serial */
+                if (enable_usb && tud_cdc_connected())
+                    write_to_usb_cdc(line_out, off);
+
+                /* emit line to uart */
+                if (enable_serial)
+                    write(1, line_out, off);
             }
-
-            base64_encode(line_out + off, spectrum_quantized, F);
-            off += strlen_spectrum_encoded;
-
-            /* finish line */
-            off += snprintf(line_out + off, outlen - off, "\r\n");
-
-            /* emit line to usb cdc serial */
-            if (enable_usb && tud_cdc_connected())
-                write_to_usb_cdc(line_out, off);
-
-            /* emit line to uart */
-            write(1, line_out, off);
         }
     }
 
