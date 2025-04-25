@@ -9,6 +9,7 @@ These assume a vanilla ARM64 Mac running Sonoma, with Xcode or at least its comm
 - Download a prebuilt gcc-arm-none-eabi from arm (also satisfies newlib dep) and extract it in ~/Downloads/
 
     curl -LO https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-aarch64-arm-none-eabi.tar.xz
+    
     tar Jxf arm-gnu-toolchain-14.2.rel1-aarch64-arm-none-eabi.tar.xz
 
 - git clone pico-sdk, also in ~/Downloads/
