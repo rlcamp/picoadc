@@ -179,6 +179,9 @@ int main(void) {
 
     init_test_signal();
 
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+
     /* fft length */
     const size_t T = 2 * SAMPLES_PER_CHUNK;
 
@@ -274,6 +277,39 @@ int main(void) {
             /* dc and nyquist bins need to be weighted down to account for r2c fft */
             spectrum_power[0] *= 0.5f;
             if (T / 2 < F) spectrum_power[T / 2] *= 0.5f;
+
+            /* attempt to find a tone as a visual diagnostic when no screen present */
+            do {
+                /* ignore DC bin and its shoulder */
+                const size_t iw_start = 2;
+
+                /* find the loudest local maximum, ignoring the first and last bins */
+                size_t iw_max = SIZE_MAX;
+                for (size_t iw = iw_start; iw < F - 1; iw++)
+                    if ((SIZE_MAX == iw_max || spectrum_power[iw] > spectrum_power[iw_max]) &&
+                        spectrum_power[iw] > spectrum_power[iw - 1] &&
+                        spectrum_power[iw] > spectrum_power[iw + 1]) iw_max = iw;
+
+                /* if no local maxima were found in the inspected bins, return zero Hz */
+                if (SIZE_MAX == iw_max) break;
+
+                /* otherwise, estimate the actual frequency to sub-bin precision using parabolic peak fit */
+                /* reference: https://ccrma.stanford.edu/~jos/parshl/Peak_Detection_Steps_3.html */
+                const float peak = spectrum_power[iw_max], one_over_peak = 1.0f / peak;
+                const float alpha = 10.0f * log10f(spectrum_power[iw_max - 1] * one_over_peak);
+                const float gamma = 10.0f * log10f(spectrum_power[iw_max + 1] * one_over_peak);
+                const float p = 0.5f * (alpha - gamma) / (alpha + gamma);
+                const float f = (iw_max + p) * df;
+                const float m = 10.0f * log10f(peak) - 0.25f * (alpha - gamma) * p;
+
+                (void)m; /* don't do anything with m yet, but suppress warning that we haven't */
+
+                /* turn on an LED when the dominant tone is in a certain frequency range */
+                if (f > 1950.0f && f < 2050.0f)
+                    gpio_put(PICO_DEFAULT_LED_PIN, 1);
+                else
+                    gpio_put(PICO_DEFAULT_LED_PIN, 0);
+            } while(0);
 
             if (enable_usb || enable_serial) {
                 /* write into first part of output line */
