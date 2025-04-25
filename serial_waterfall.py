@@ -8,6 +8,7 @@ from collections import namedtuple
 import threading
 import queue
 import math
+import base64
 
 import fcntl
 import tty
@@ -70,7 +71,7 @@ def child_thread(main_thread_work):
 
         try:
             df_text, dt_text, levels_text = line.split(',')
-            levels = np.array(bytearray.fromhex(levels_text)) * scale + offset
+            levels = np.frombuffer(base64.b64decode(levels_text), dtype=np.uint8) * scale + offset
         except: continue
 
         packet_tuple = namedtuple('packet', [ 'levels', 'f0', 'df', 'dt'])

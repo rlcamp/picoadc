@@ -121,6 +121,42 @@ static float cmagsquaredf(const float complex a) {
 
 extern void write_to_usb_cdc(const char * buf, size_t length);
 
+static size_t base64_encoded_size_including_null_termination(const size_t plain_size) {
+    return ((plain_size + 2) / 3) * 4 + 1;
+}
+
+static char * base64_encode(char * dest, const void * plainv, const size_t plain_size) {
+    static const char symbols[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const unsigned char * plain = plainv;
+    const size_t encoded_size = base64_encoded_size_including_null_termination(plain_size) - 1;
+    char * encoded_start = dest ? dest : malloc(encoded_size + 1);
+    char * encoded = encoded_start;
+
+    /* loop over all complete groups of four encoded, three decoded bytes */
+    for (const unsigned char * const stop = plain + plain_size - 2; plain < stop; encoded += 4, plain += 3) {
+        const unsigned int merged = plain[0] << 16 | plain[1] << 8 | plain[2];
+        encoded[0] = symbols[(merged >> 18) & 0x3F];
+        encoded[1] = symbols[(merged >> 12) & 0x3F];
+        encoded[2] = symbols[(merged >>  6) & 0x3F];
+        encoded[3] = symbols[(merged      ) & 0x3F];
+    }
+
+    /* handle partial group at end */
+    if (plain_size % 3) {
+        const unsigned int merged = plain[0] << 16 | (2 == plain_size % 3 ? plain[1] << 8 : 0);
+        encoded[0] = symbols[(merged >> 18) & 0x3F];
+        encoded[1] = symbols[(merged >> 12) & 0x3F];
+        encoded[2] = (2 == plain_size % 3) ? symbols[(merged >> 6) & 0x3F] : '=';
+        encoded[3] = '=';
+        encoded[4] = '\0';
+    }
+    else
+        encoded[0] = '\0';
+
+    return encoded_start;
+}
+
+
 int main(void) {
     set_sys_clock_48mhz();
 
@@ -162,7 +198,11 @@ int main(void) {
     float * restrict const window = malloc(sizeof(float) * (T / 2 + 1));
     float * restrict const spectrum_power = malloc(sizeof(float) * F);
 
-    const size_t outlen = sizeof("000.00000,000.00000,\r\n") + 2 * F;
+    uint8_t * restrict const spectrum_quantized = malloc(sizeof(uint8_t) * F);
+
+    const size_t strlen_spectrum_encoded = base64_encoded_size_including_null_termination(F) - 1;
+
+    const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
     char * restrict const line_out = malloc(outlen);
 
     /* hann window, exploiting symmetry, accounting for averaging over time, normalized
@@ -235,10 +275,11 @@ int main(void) {
             /* map power to eight bit log scale values */
             for (size_t iw = 0; iw < F; iw++) {
                 const float dB = 10.0f * log10f(spectrum_power[iw]);
-                const uint8_t quantized = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
-
-                off += snprintf(line_out + off, outlen - off, "%02x", quantized);
+                spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
             }
+
+            base64_encode(line_out + off, spectrum_quantized, F);
+            off += strlen_spectrum_encoded;
 
             /* finish line */
             off += snprintf(line_out + off, outlen - off, "\r\n");
