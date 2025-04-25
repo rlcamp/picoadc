@@ -1,3 +1,4 @@
+#include "pico/stdio_uart.h"
 #include "hardware/clocks.h"
 #include "hardware/irq.h"
 #include "hardware/adc.h"
@@ -131,6 +132,9 @@ int main(void) {
     if (board_init_after_tusb)
         board_init_after_tusb();
 
+    /* init stdout/stderr on uart tx, do not enable uart rx */
+    stdio_uart_init_full(uart_default, 115200, PICO_DEFAULT_UART_TX_PIN, -1);
+
     init_test_signal();
 
     /* fft length */
@@ -142,7 +146,9 @@ int main(void) {
     const float fs = SAMPLE_RATE_NUMERATOR / (float)sample_rate_denominator;
 
     /* number of fft frames to average for each line of output pixels */
-    const float dt_desired = 0.0f; /* seconds */
+    /* WARNING: at small enough values of this, we won't be able to send out the rows of
+     spectrum data fast enough on the physical uart */
+    const float dt_desired = 0.2f; /* seconds */
     const size_t fft_frames_per_average = fmaxf(1.0f, dt_desired * fs / (0.5f * T) + 0.5f);
 
     const float df = fs / T, dt = 0.5f * fft_frames_per_average * T / fs;
@@ -164,10 +170,6 @@ int main(void) {
     for (size_t it = 0; it < T / 2 + 1; it++)
         window[it] = (1.0f - cosf(2.0f * (float)M_PI * (float)it / T)) * (float)M_SQRT2 / (T * 2047.0f * sqrtf(fft_frames_per_average));
 
-    /* this will block until the usb device is actually opened on the host end */
-    while (tud_task(), !tud_cdc_connected());
-    tud_task();
-
     /* initially we will pretend we are "caught up" with wherever the stream is now */
     size_t ichunk_read = *(volatile size_t *)&ichunk_written;
     size_t iframe_averaged = 0;
@@ -178,7 +180,10 @@ int main(void) {
     const float one_over_out_scale = 1.0f / out_scale;
 
     /* inner loop over chunks of data */
-    while (tud_cdc_connected()) {
+    while (1) {
+        /* need to unconditionally do this regularly to make sure usb stuff happens */
+        tud_task();
+
         /* wait until there is a new chunk of data. note the forced volatile read */
         while (ichunk_read == *(volatile size_t *)&ichunk_written) {
             tud_task();
@@ -239,9 +244,13 @@ int main(void) {
             off += snprintf(line_out + off, outlen - off, "\r\n");
 
             /* emit line to usb cdc serial */
-            write_to_usb_cdc(line_out, off);
+            if (tud_cdc_connected())
+                write_to_usb_cdc(line_out, off);
+
+            /* emit line to uart */
+            write(1, line_out, off);
         }
     }
 
-    NVIC_SystemReset();
+    /* not reached */
 }
