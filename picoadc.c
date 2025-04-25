@@ -162,11 +162,15 @@ int main(void) {
 
     adc_dma_init();
 
-    board_init();
-    tusb_init();
+    const char enable_usb = 1;
 
-    if (board_init_after_tusb)
-        board_init_after_tusb();
+    if (enable_usb) {
+        board_init();
+        tusb_init();
+
+        if (board_init_after_tusb)
+            board_init_after_tusb();
+    }
 
     /* init stdout/stderr on uart tx, do not enable uart rx */
     stdio_uart_init_full(uart_default, 115200, PICO_DEFAULT_UART_TX_PIN, -1);
@@ -222,11 +226,11 @@ int main(void) {
     /* inner loop over chunks of data */
     while (1) {
         /* need to unconditionally do this regularly to make sure usb stuff happens */
-        tud_task();
+        if (enable_usb) tud_task();
 
         /* wait until there is a new chunk of data. note the forced volatile read */
         while (ichunk_read == *(volatile size_t *)&ichunk_written) {
-            tud_task();
+            if (enable_usb) tud_task();
             yield();
         }
 
@@ -285,7 +289,7 @@ int main(void) {
             off += snprintf(line_out + off, outlen - off, "\r\n");
 
             /* emit line to usb cdc serial */
-            if (tud_cdc_connected())
+            if (enable_usb && tud_cdc_connected())
                 write_to_usb_cdc(line_out, off);
 
             /* emit line to uart */
