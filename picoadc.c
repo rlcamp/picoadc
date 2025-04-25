@@ -27,7 +27,7 @@
 #define IDMA_ADC 0
 
 /* 2^this is the total number of bytes of sram used for the big ring buffer */
-#define RING_BUFFER_WRAP_BITS 11
+#define RING_BUFFER_WRAP_BITS 12
 
 /* total number of bytes of sram used for ring buffer */
 #define RING_BUFFER_SIZE (1U << RING_BUFFER_WRAP_BITS)
@@ -163,7 +163,7 @@ int main(void) {
     adc_dma_init();
 
     const char enable_usb = 1;
-    const char enable_serial = 1;
+    const char enable_serial = 0;
 
     if (enable_usb) {
         board_init();
@@ -193,7 +193,7 @@ int main(void) {
     /* number of fft frames to average for each line of output pixels */
     /* WARNING: at small enough values of this, we won't be able to send out the rows of
      spectrum data fast enough on the physical uart */
-    const float dt_desired = 0.1f; /* seconds */
+    const float dt_desired = 0.0f; /* seconds */
     const size_t fft_frames_per_average = fmaxf(1.0f, dt_desired * fs / (0.5f * T) + 0.5f);
 
     const float df = fs / T, dt = 0.5f * fft_frames_per_average * T / fs;
