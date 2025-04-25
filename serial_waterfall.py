@@ -64,8 +64,10 @@ def child_thread(main_thread_work):
     for line in sys.stdin:
         if window_closed: break
 
-        df_text, dt_text, levels_text = line.split(',')
-        levels = np.array(bytearray.fromhex(levels_text)) * scale + offset
+        try:
+            df_text, dt_text, levels_text = line.split(',')
+            levels = np.array(bytearray.fromhex(levels_text)) * scale + offset
+        except: continue
 
         packet_tuple = namedtuple('packet', [ 'levels', 'f0', 'df', 'dt'])
         main_thread_work.put(packet_tuple(levels = levels,
