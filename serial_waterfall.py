@@ -48,6 +48,8 @@ def open_tty_as_stdin(path, speed=None):
 
     termios.tcsetattr(fd_tty, termios.TCSANOW, [c_iflag, c_oflag, c_cflag, c_lflag, ispeed, ospeed, c_cc])
 
+    termios.tcflush(fd_tty, termios.TCIFLUSH)
+
     os.dup2(fd_tty, 0)
     os.close(fd_tty)
 
@@ -60,6 +62,8 @@ def child_thread(main_thread_work):
     global window_closed
     scale = 0.75
     offset = -256 * scale
+
+    sys.stdin.reconfigure(errors='ignore')
 
     for line in sys.stdin:
         if window_closed: break
