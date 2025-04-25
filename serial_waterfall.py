@@ -153,7 +153,7 @@ def main():
 
         # if not the first call, sanity check that number of bins has not changed
         elif packet.levels.shape[0] != X:
-            raise RuntimeError('consecutive packets have different numbers of bins (%u != %u)' % levels.shape[0], X)
+            raise RuntimeError('consecutive packets have different numbers of bins (%u != %u)' % (packet.levels.shape[0], X))
 
         # convert the values in dB for the new row of pixels to rgba values
         bins_rgba = to_rgba_func(np.clip((packet.levels - clim[0]) / (clim[1] - clim[0]), 0, 1), bytes=True, norm=False)
