@@ -6,7 +6,7 @@ if (NOT DEFINED ENV{PICO_SDK_PATH})
   set(ENV{PICO_SDK_PATH} "~/Downloads/pico-sdk/")
 endif()
 if (NOT DEFINED ENV{PICO_TOOLCHAIN_PATH})
-  set(ENV{PICO_TOOLCHAIN_PATH} "~/Downloads/arm-gnu-toolchain-14.2.rel1-darwin-arm64-arm-none-eabi/bin")
+  set(ENV{PICO_TOOLCHAIN_PATH} "/Applications/ArmGNUToolchain/14.2.rel1/arm-none-eabi/bin")
 endif()
 
 # initialize the SDK directly

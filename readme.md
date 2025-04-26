@@ -4,13 +4,9 @@ These assume a vanilla ARM64 Mac running Sonoma, with Xcode or at least its comm
 
 ### Obtain prerequisites
 
-- Build and install xz from source [https://tukaani.org/xz/#_stable] (macOS doesn't come with it, but macOS tar WILL use it to extract .tar.xz if present)
 - Build and install cmake from source
-- Download a prebuilt gcc-arm-none-eabi from arm (also satisfies newlib dep) and extract it in ~/Downloads/
 
-    curl -LO https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-aarch64-arm-none-eabi.tar.xz
-    
-    tar Jxf arm-gnu-toolchain-14.2.rel1-aarch64-arm-none-eabi.tar.xz
+- Download the latest Arm GNU Toolchain .pkg file (or 13.1 if on an Intel Mac) from [https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads] and install it
 
 - git clone pico-sdk, also in ~/Downloads/
 
