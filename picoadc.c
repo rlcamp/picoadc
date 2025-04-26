@@ -1,32 +1,48 @@
+/* campbell, 2025, isc license to the extent applicable */
+
+/* we will optionally use the physical serial port for output, or maybe diagnostic text */
 #include "pico/stdio_uart.h"
+
+/* we will be directly accessing these RP2350 subsystems using these api functions */
 #include "hardware/clocks.h"
 #include "hardware/irq.h"
 #include "hardware/adc.h"
 #include "hardware/dma.h"
 #include "hardware/pwm.h"
+
+/* don't remember why we need this, maybe just for dsb and wfe, but including it by name
+ also prevents us from accidentally attempting to compile for RP2040 */
 #include "RP2350.h"
 
+/* non-rp2350-specific stuff we need for the tinyusb library */
 #include "bsp/board_api.h"
 #include <tusb.h>
 
 #include "fft_anywhere.h"
 
+/* c standard includes */
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <assert.h>
 
-/* as a diagnostic we will output a 2 kHz full scale square wave on this pin */
+/* "posix" include, needed for write() which is used to emit complete lines to the uart */
+#include <unistd.h>
+
+/* as a diagnostic, we will output a 2 kHz full scale square wave on this pin */
 #define PWM_PIN 22
 
 /* adc input pin number is 26 plus this value */
 #define ADC_CHANNEL 1
 
+/* we will hardcode this DMA channel for use by the ADC, since we have to hardcode which
+ interrupt fires whenever it completes a transaction */
 #define IDMA_ADC 0
 
-/* 2^this is the total number of bytes of sram used for the big ring buffer */
+/* 2^this is the total number of bytes of sram used for the big ring buffer. this value,
+ and the number of chunks, indirectly determine the FFT resolution, since each chunk is
+ used as half of an FFT frame */
 #define RING_BUFFER_WRAP_BITS 12
 
 /* total number of bytes of sram used for ring buffer */
@@ -47,22 +63,46 @@ unsigned long sample_rate_denominator = 1500;
 
 void yield(void) {
     /* we could do context switching here for cooperative multitasking if we wanted */
-    asm volatile("dsb; wfe");
+    __DSB();
+
+    /* depending on whether an interrupt (or other processor-waking event) has already
+     become pending, this will EITHER put the processor to sleep until an interrupt becomes
+     pending, OR it will clear the event-is-pending condition and NOT put the processor to
+     sleep, and the main loop will re-check the condition and call this again */
+    __WFE();
 }
 
-/* note this is NOT volatile because we want to access it as a regular variable from within
+/* ring buffer writer cursor, increments by one each time a chunk is done, i.e. 4 times per
+ ring buffer wraparound interval, if there are 4 chunks. incrementing happens inside an
+ interrupt handler that fires when the DMA subsystem has finished writing that chunk worth
+ of samples into the ring buffer from the ADC subsystem. assuming the processor is asleep
+ waiting for the next chunk to finish, it will wake up and service the interrupt handler,
+ which will increment the write cursor, and then resume running the main code which will
+ see that the write cursor is ahead of the read cursor and react accordingly.
+
+ note this is NOT volatile because we want to access it as a regular variable from within
  ISR context where it is safe to do so, and do explicitly volatile reads of it otherwise */
 size_t ichunk_written = 0;
 
-/* the actual big ring buffer, divided into 4 chunks, aligned to its own total size */
+/* the actual ring buffer, divided into chunks, and aligned to its own total size */
 __attribute((aligned(RING_BUFFER_SIZE)))
 static int16_t adc_chunks[CHUNKS][SAMPLES_PER_CHUNK];
 
-/* this function gets called once per chunk, i.e. four times per full ring buffer */
+/* interrupt handler, gets called once per chunk, i.e. four times per full ring buffer */
 void __scratch_y("") adc_dma_irq_handler_single(void) {
+    /* acknowledge the interrupt so that it doesn't re-fire until the next chunk */
     dma_hw->ints0 = 1U << IDMA_ADC;
 
+    /* increment the write cursor. as an unsigned integer type, this will eventually wrap
+     around on some large power of 2 boundary, and as long as the read cursor(s) are the
+     same type and we only compare read cursors to the write cursor using strict equality
+     or by subtracting the read cursor from the write cursor, we can always see how far
+     behind the reader is, even if the writer has wrapped around and the reader has not */
     ichunk_written++;
+
+    /* enforce that the incremented value has propagated fully to memory before the main
+     thread is allowed to look at it to see if it has changed, so that we don't erroneously
+     put the processor back to sleep without handling the new chunk */
     __DSB();
 }
 
@@ -88,8 +128,18 @@ static void adc_dma_init(void) {
                    false, /* disable err bit */
                    false /* no byte shift */ );
 
+    /* tell the ADC subsystem that the sample period should be this many main clock ticks */
     adc_set_clkdiv(sample_rate_denominator - 1);
 
+    /* set up a DMA channel in the rp2350-specific ring buffer mode. each time the ADC
+     tells the DMA that a sample can be read from the ADC's fifo, the DMA will copy it to
+     the current address in the ring buffer and increment the dest address. after one chunk
+     worth of samples, the transaction will finish and the interrupt handler will fire, but
+     the channel will immediately retrigger itself and continue to increment the dest
+     address. "ring" mode causes the dest address to wrap around at the given number of
+     least significant bits of the address, i.e. as long as the whole buffer is aligned in
+     absolute memory such that it starts with those least significant bits cleared, it will
+     wrap around seamlessly */
     dma_channel_claim(IDMA_ADC);
     dma_channel_config cfg = dma_channel_get_default_config(IDMA_ADC);
     channel_config_set_dreq(&cfg, DREQ_ADC);
@@ -105,17 +155,20 @@ static void adc_dma_init(void) {
                           SAMPLES_PER_CHUNK | (1U << 28), /* enable self retrigger */
                           false);
 
+    /* set up the interrupt handler to fire every time a transaction (one chunk) finishes */
     dma_channel_acknowledge_irq0(IDMA_ADC);
     dma_channel_set_irq0_enabled(IDMA_ADC, true);
     __DSB();
     irq_set_exclusive_handler(DMA_IRQ_0, adc_dma_irq_handler_single);
     irq_set_enabled(DMA_IRQ_0, true);
 
+    /* start the DMA channel, and then start the ADC itself which will feed it */
     dma_channel_start(IDMA_ADC);
     adc_run(true);
 }
 
 static float cmagsquaredf(const float complex a) {
+    /* this is equivalent to |a|^2, or a * conj(a), but computed more efficiently */
     return crealf(a) * crealf(a) + cimagf(a) * cimagf(a);
 }
 
@@ -156,8 +209,8 @@ static char * base64_encode(char * dest, const void * plainv, const size_t plain
     return encoded_start;
 }
 
-
 int main(void) {
+    /* this is not a terribly cpu intensive program, so leave the main clock at 48 MHz */
     set_sys_clock_48mhz();
 
     adc_dma_init();
@@ -182,10 +235,13 @@ int main(void) {
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
-    /* fft length */
+    /* fft length. we use each chunk twice, first as the final 50% of an fft frame, then
+     as the initial 50% of the following fft frame */
     const size_t T = 2 * SAMPLES_PER_CHUNK;
 
-    /* number of kept frequency bins */
+    /* number of kept frequency bins. the dc and nyquist bins are purely real, and the r2c
+     fft computes them by packing the nyquist bin into the imaginary component of the dc
+     bin, thereby only needing T/2 storage, but we will unpack them for subsequent logic */
     const size_t F = T / 2 + 1;
 
     const float fs = SAMPLE_RATE_NUMERATOR / (float)sample_rate_denominator;
@@ -196,12 +252,18 @@ int main(void) {
     const float dt_desired = 0.0f; /* seconds */
     const size_t fft_frames_per_average = fmaxf(1.0f, dt_desired * fs / (0.5f * T) + 0.5f);
 
+    /* the actual resulting pixel spacings, in frequency and time respectively */
     const float df = fs / T, dt = 0.5f * fft_frames_per_average * T / fs;
 
-    /* plan an r2c fft */
+    /* plan an r2c fft. note that this internally calls malloc, which can and should
+     raise eyebrows in embedded microcontroller code, along with the fact that it consumes
+     memory at runtime with values that could be known at compile time. it IS possible to
+     bake this fft plan into the binary, however this can also increase power consumption
+     and latency if the fft plan does not fit in the rp2350's XIP cache (16 kB) */
     struct planned_real_fft * const plan = plan_real_fft_of_length(T);
 
-    /* allocate a bunch of buffers */
+    /* allocate a bunch of buffers. these can easily be static allocations if desired and
+     if the above usage of malloc has also been factored out */
     float * restrict const scratch_in = malloc(sizeof(float) * T);
     float complex * restrict const scratch_out = malloc(sizeof(float complex) * T / 2);
     float * restrict const window = malloc(sizeof(float) * (T / 2 + 1));
@@ -211,6 +273,8 @@ int main(void) {
 
     const size_t strlen_spectrum_encoded = base64_encoded_size_including_null_termination(F) - 1;
 
+    /* figure out the maximum length of each line of text that will be emitted and allocate
+      a buffer of that length, including its zero termination */
     const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
     char * restrict const line_out = malloc(outlen);
 
@@ -233,35 +297,43 @@ int main(void) {
         /* need to unconditionally do this regularly to make sure usb stuff happens */
         if (enable_usb) tud_task();
 
-        /* wait until there is a new chunk of data. note the forced volatile read */
+        /* wait until there is a new chunk of data. note the forced volatile read of a not
+         otherwise volatile value, which tells the compiler it is not allowed to assume
+         it already knows what this value is because it just read it */
         while (ichunk_read == *(volatile size_t *)&ichunk_written) {
             if (enable_usb) tud_task();
             yield();
         }
 
-        /* get pointers to last two framehalves and advance the read cursor */
+        /* get pointers to most recent two chunks, and advance the read cursor */
         const int16_t * restrict chunk_prev = adc_chunks[(ichunk_read - 1) % CHUNKS];
         const int16_t * restrict chunk_this = adc_chunks[(ichunk_read + 0) % CHUNKS];
         ichunk_read++;
 
-        /* copy samples from ring buffer, promote to floating point, multiply by window */
+        /* copy samples from ring buffer into real-valued fft input scratch memory, in the
+         process promoting the samples from 16-bit integers to 32-bit floating point, and
+         multiplying by the hann window */
         for (size_t it_frame = 0, it_framehalf = 0; it_frame < T / 2; it_frame++, it_framehalf++)
             scratch_in[it_frame] = chunk_prev[it_framehalf] * window[it_frame];
         for (size_t it_frame = T / 2, it_framehalf = 0; it_frame < T; it_frame++, it_framehalf++)
             scratch_in[it_frame] = chunk_this[it_framehalf] * window[T / 2 - it_framehalf];
 
-        /* do the r2c fft of the most recent two framehalves of samples */
+        /* do the real-to-complex fft of the most recent two framehalves of samples,
+         putting the result in the length-T/2 scratch memory */
         fft_evaluate_real(scratch_out, scratch_in, plan);
 
-        /* unpack dc and nyquist bins */
+        /* unpack dc and nyquist bins, which are real-valued and both shoved in the dc bin */
         const float complex nyquist_bin = cimagf(scratch_out[0]);
         scratch_out[0] = crealf(scratch_out[0]);
 
         /* accumulate power */
         if (0 == iframe_averaged) {
+            /* if this is the first (or only) fft of the incoherent averaging interval,
+             then take a fast path where we set the value instead of incrementing it */
             for (size_t iw = 0; iw < F - 1; iw++)
                 spectrum_power[iw] = cmagsquaredf(scratch_out[iw]);
 
+            /* handle the nyquist bin specially */
             if (T / 2 < F) spectrum_power[T / 2] = cmagsquaredf(nyquist_bin);
         } else {
             for (size_t iw = 0; iw < F - 1; iw++)
@@ -316,6 +388,9 @@ int main(void) {
 
                 /* turn on an LED when the dominant tone is in a certain frequency range,
                  and is louder than the local median by at least the threshold */
+                /* NOTE: the onboard LED on the pico 2 draws a surprising amount of
+                 current, and substantially changes the behaviour of the buck converter
+                 supplying the 3.3V rail when it is on */
                 if (f > 1950.0f && f < 2050.0f && bins_above_limit <= W / 2)
                     gpio_put(PICO_DEFAULT_LED_PIN, 1);
                 else
