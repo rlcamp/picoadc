@@ -4,13 +4,11 @@ These assume a vanilla ARM64 Mac running Sonoma, with Xcode or at least its comm
 
 ### Obtain prerequisites
 
-- Build and install cmake from source
+- Build and install [https://cmake.org/download/] from source using `./configure && make && sudo make install`
 
 - Download the latest Arm GNU Toolchain .pkg file (or 13.1 if on an Intel Mac) from [https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads] and install it
 
-- git clone pico-sdk, also in ~/Downloads/
-
-- run `git submodule update --init` within the pico-sdk directory
+- in `~/Downloads/`, run `git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git && cd pico-sdk && git submodule update --init`
 
 ### Build this code
 
