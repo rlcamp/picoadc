@@ -198,28 +198,6 @@ int main(void) {
     /* this is not a terribly cpu intensive program, so leave the main clock at 48 MHz */
     set_sys_clock_48mhz();
 
-    /* turn off clocks to a bunch of stuff we aren't using, saves a bit over one mA */
-    clocks_hw->wake_en1 &= ~(CLOCKS_WAKE_EN1_CLK_SYS_UART1_BITS |
-                             CLOCKS_WAKE_EN1_CLK_PERI_UART1_BITS |
-                             CLOCKS_WAKE_EN1_CLK_SYS_TRNG_BITS |
-                             CLOCKS_WAKE_EN1_CLK_SYS_TIMER1_BITS |
-                             CLOCKS_WAKE_EN1_CLK_SYS_TIMER0_BITS |
-                             CLOCKS_WAKE_EN1_CLK_SYS_SPI1_BITS |
-                             CLOCKS_WAKE_EN1_CLK_PERI_SPI1_BITS |
-                             CLOCKS_WAKE_EN1_CLK_SYS_SPI0_BITS |
-                             CLOCKS_WAKE_EN1_CLK_PERI_SPI0_BITS);
-
-    clocks_hw->wake_en0 &= ~(CLOCKS_WAKE_EN0_CLK_SYS_SHA256_BITS |
-                             CLOCKS_WAKE_EN0_CLK_SYS_PWM_BITS |
-                             CLOCKS_WAKE_EN0_CLK_SYS_PIO2_BITS |
-                             CLOCKS_WAKE_EN0_CLK_SYS_PIO1_BITS |
-                             CLOCKS_WAKE_EN0_CLK_SYS_PIO0_BITS |
-                             CLOCKS_WAKE_EN0_CLK_SYS_JTAG_BITS |
-                             CLOCKS_WAKE_EN0_CLK_SYS_I2C1_BITS |
-                             CLOCKS_WAKE_EN0_CLK_SYS_I2C0_BITS |
-                             CLOCKS_WAKE_EN0_CLK_SYS_HSTX_BITS |
-                             CLOCKS_WAKE_EN0_CLK_HSTX_BITS);
-
     adc_dma_init();
 
     const char enable_usb = 1;
@@ -231,10 +209,6 @@ int main(void) {
 
         if (board_init_after_tusb)
             board_init_after_tusb();
-    } else {
-        clocks_hw->wake_en1 &= ~(CLOCKS_WAKE_EN1_CLK_USB_BITS |
-                                 CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS);
-        clocks_hw->wake_en0 &= ~CLOCKS_WAKE_EN0_CLK_SYS_PLL_USB_BITS;
     }
 
     /* init stdout/stderr on uart tx, do not enable uart rx */
