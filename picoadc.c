@@ -8,7 +8,6 @@
 #include "hardware/irq.h"
 #include "hardware/adc.h"
 #include "hardware/dma.h"
-#include "hardware/pwm.h"
 
 /* don't remember why we need this, maybe just for dsb and wfe, but including it by name
  also prevents us from accidentally attempting to compile for RP2040 */
@@ -29,9 +28,6 @@
 
 /* "posix" include, needed for write() which is used to emit complete lines to the uart */
 #include <unistd.h>
-
-/* as a diagnostic, we will output a 2 kHz full scale square wave on this pin */
-#define PWM_PIN 22
 
 /* adc input pin number is 26 plus this value */
 #define ADC_CHANNEL 1
@@ -104,17 +100,6 @@ void __scratch_y("") adc_dma_irq_handler_single(void) {
      thread is allowed to look at it to see if it has changed, so that we don't erroneously
      put the processor back to sleep without handling the new chunk */
     __DSB();
-}
-
-static void init_test_signal(void) {
-    /* this will emit a full scale 2 kHz square wave on a pin (numerator is 48 MHz) */
-    const unsigned square_wave_frequency_denominator = 24000;
-
-    gpio_set_function(PWM_PIN, GPIO_FUNC_PWM);
-    const unsigned slice_num = pwm_gpio_to_slice_num(PWM_PIN);
-    pwm_set_wrap(slice_num, square_wave_frequency_denominator - 1);
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, square_wave_frequency_denominator / 2);
-    pwm_set_enabled(slice_num, true);
 }
 
 static void adc_dma_init(void) {
@@ -229,8 +214,6 @@ int main(void) {
     /* init stdout/stderr on uart tx, do not enable uart rx */
     if (enable_serial)
         stdio_uart_init_full(uart_default, 115200, PICO_DEFAULT_UART_TX_PIN, -1);
-
-    init_test_signal();
 
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
