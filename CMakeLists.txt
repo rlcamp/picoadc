@@ -37,6 +37,7 @@ add_executable(picoadc
     picoadc.c
     usb_descriptors.c
     fft_anywhere.c
+    rp2_ili9341_scrolling.c
 )
 
 # add some warning flags
@@ -51,7 +52,7 @@ set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS} -O3 -ffinite-math-only -fno-signed-zeros -
 target_include_directories(picoadc PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
 # pull in common dependencies
-target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_pwm tinyusb_board tinyusb_device)
+target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_pwm hardware_spi tinyusb_board tinyusb_device)
 
 pico_enable_stdio_usb(picoadc 0)
 pico_enable_stdio_uart(picoadc 0)

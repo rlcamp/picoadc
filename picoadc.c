@@ -15,6 +15,7 @@
 #include <tusb.h>
 
 #include "fft_anywhere.h"
+#include "rp2_ili9341_scrolling.h"
 
 /* c standard includes */
 #include <math.h>
@@ -198,7 +199,9 @@ int main(void) {
 
     adc_dma_init();
 
-    const char enable_usb = 1;
+    ili9341_scrolling_init();
+
+    const char enable_usb = 0;
 
     /* turn off clocks to a bunch of stuff we aren't using, saves about 4 mW */
     clocks_hw->wake_en1 = (CLOCKS_WAKE_EN1_BITS &
@@ -210,9 +213,7 @@ int main(void) {
                              CLOCKS_WAKE_EN1_CLK_SYS_TIMER1_BITS |
                              CLOCKS_WAKE_EN1_CLK_SYS_TIMER0_BITS |
                              CLOCKS_WAKE_EN1_CLK_SYS_SPI1_BITS |
-                             CLOCKS_WAKE_EN1_CLK_PERI_SPI1_BITS |
-                             CLOCKS_WAKE_EN1_CLK_SYS_SPI0_BITS |
-                             CLOCKS_WAKE_EN1_CLK_PERI_SPI0_BITS));
+                             CLOCKS_WAKE_EN1_CLK_PERI_SPI1_BITS));
 
     clocks_hw->wake_en0 = (CLOCKS_WAKE_EN0_BITS &
                            ~(CLOCKS_WAKE_EN0_CLK_SYS_SHA256_BITS |
