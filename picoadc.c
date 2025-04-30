@@ -1,8 +1,5 @@
 /* campbell, 2025, isc license to the extent applicable */
 
-/* we will optionally use the physical serial port for output, or maybe diagnostic text */
-#include "pico/stdio_uart.h"
-
 /* we will be directly accessing these RP2350 subsystems using these api functions */
 #include "hardware/clocks.h"
 #include "hardware/irq.h"

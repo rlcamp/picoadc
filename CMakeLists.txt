@@ -54,6 +54,7 @@ target_include_directories(picoadc PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_pwm tinyusb_board tinyusb_device)
 
 pico_enable_stdio_usb(picoadc 0)
+pico_enable_stdio_uart(picoadc 0)
 
 # create map/bin/hex/uf2 file in addition to ELF.
 pico_add_extra_outputs(picoadc)
