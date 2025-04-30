@@ -244,13 +244,6 @@ int main(void) {
             board_init_after_tusb();
     }
 
-    /* init stdout/stderr on uart tx, do not enable uart rx */
-    if (enable_serial)
-        stdio_uart_init_full(uart_default, 115200, PICO_DEFAULT_UART_TX_PIN, -1);
-
-    gpio_init(PICO_DEFAULT_LED_PIN);
-    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
-
     /* fft length. we use each chunk twice, first as the final 50% of an fft frame, then
      as the initial 50% of the following fft frame */
     const size_t T = 2 * SAMPLES_PER_CHUNK;
@@ -365,53 +358,6 @@ int main(void) {
             /* dc and nyquist bins need to be weighted down to account for r2c fft */
             spectrum_power[0] *= 0.5f;
             if (T / 2 < F) spectrum_power[T / 2] *= 0.5f;
-
-            /* attempt to find a tone as a visual diagnostic when no screen present */
-            do {
-                /* consider an SNR threshold of 12.04 dB within that window */
-                const float one_over_threshold = 1.0f / 16.0f;
-
-                /* consider a local window 9 bins wide, centered on the bin under test */
-                const size_t W = 9;
-
-                /* find the loudest local maximum */
-                size_t iw_max = SIZE_MAX;
-                for (size_t iw = W / 2; iw < F - W / 2; iw++)
-                    if ((SIZE_MAX == iw_max || spectrum_power[iw] > spectrum_power[iw_max]) &&
-                        spectrum_power[iw] > spectrum_power[iw - 1] &&
-                        spectrum_power[iw] > spectrum_power[iw + 1]) iw_max = iw;
-
-                /* if no local maxima were found in the inspected bins, ignore this frame */
-                if (SIZE_MAX == iw_max) break;
-
-                /* otherwise, estimate the actual frequency to sub-bin precision using parabolic peak fit */
-                /* reference: https://ccrma.stanford.edu/~jos/parshl/Peak_Detection_Steps_3.html */
-                const float peak = spectrum_power[iw_max], one_over_peak = 1.0f / peak;
-                const float alpha = 10.0f * log10f(spectrum_power[iw_max - 1] * one_over_peak);
-                const float gamma = 10.0f * log10f(spectrum_power[iw_max + 1] * one_over_peak);
-                const float p = 0.5f * (alpha - gamma) / (alpha + gamma);
-                const float f = (iw_max + p) * df;
-                const float m = 10.0f * log10f(peak) - 0.25f * (alpha - gamma) * p;
-
-                /* we can quickly determine whether the peak is louder than the local median
-                 by at least some threshold, by counting how many local bins are louder than
-                 the peak divided by that threshold, without actually calculating the median */
-                const float limit = m * one_over_threshold;
-
-                size_t bins_above_limit = 0;
-                for (int ioffset = -W / 2; ioffset < (int)W - (int)W / 2; ioffset++)
-                    if (spectrum_power[iw_max + ioffset] > limit) bins_above_limit++;
-
-                /* turn on an LED when the dominant tone is in a certain frequency range,
-                 and is louder than the local median by at least the threshold */
-                /* NOTE: the onboard LED on the pico 2 draws a surprising amount of
-                 current, and substantially changes the behaviour of the buck converter
-                 supplying the 3.3V rail when it is on */
-                if (f > 1950.0f && f < 2050.0f && bins_above_limit <= W / 2)
-                    gpio_put(PICO_DEFAULT_LED_PIN, 1);
-                else
-                    gpio_put(PICO_DEFAULT_LED_PIN, 0);
-            } while(0);
 
             /* map power to eight bit log scale values */
             for (size_t iw = 0; iw < F; iw++) {
