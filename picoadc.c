@@ -253,14 +253,8 @@ int main(void) {
 
     const float fs = SAMPLE_RATE_NUMERATOR / (float)sample_rate_denominator;
 
-    /* number of fft frames to average for each line of output pixels */
-    /* WARNING: at small enough values of this, we won't be able to send out the rows of
-     spectrum data fast enough on the physical uart */
-    const float dt_desired = 0.0f; /* seconds */
-    const size_t fft_frames_per_average = fmaxf(1.0f, dt_desired * fs / (0.5f * T) + 0.5f);
-
     /* the actual resulting pixel spacings, in frequency and time respectively */
-    const float df = fs / T, dt = 0.5f * fft_frames_per_average * T / fs;
+    const float df = fs / T, dt = 0.5f * T / fs;
 
     /* plan an r2c fft. note that this internally calls malloc, which can and should
      raise eyebrows in embedded microcontroller code, along with the fact that it consumes
@@ -274,7 +268,6 @@ int main(void) {
     float * restrict const scratch_in = malloc(sizeof(float) * T);
     float complex * restrict const scratch_out = malloc(sizeof(float complex) * T / 2);
     float * restrict const window = malloc(sizeof(float) * (T / 2 + 1));
-    float * restrict const spectrum_power = malloc(sizeof(float) * F);
 
     uint8_t * restrict const spectrum_quantized = malloc(sizeof(uint8_t) * F);
 
@@ -285,14 +278,13 @@ int main(void) {
     const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
     char * restrict const line_out = malloc(outlen);
 
-    /* hann window, exploiting symmetry, accounting for averaging over time, normalized
-     such that a full scale real-valued sine wave will have a -3.0103 dB response */
+    /* hann window, exploiting symmetry, normalized such that a full scale real-valued sine
+     wave will have a -3.0103 dB response */
     for (size_t it = 0; it < T / 2 + 1; it++)
-        window[it] = (1.0f - cosf(2.0f * (float)M_PI * (float)it / T)) * (float)M_SQRT2 / (T * 2047.0f * sqrtf(fft_frames_per_average));
+        window[it] = (1.0f - cosf(2.0f * (float)M_PI * (float)it / T)) * (float)M_SQRT2 / (T * 2047.0f);
 
     /* initially we will pretend we are "caught up" with wherever the stream is now */
     size_t ichunk_read = *(volatile size_t *)&ichunk_written;
-    size_t iframe_averaged = 0;
 
     /* output will be on [-96, 0) dB relative to full scale, in 0.75 dB increments */
     const float out_scale = 0.375f;
@@ -333,52 +325,32 @@ int main(void) {
         const float complex nyquist_bin = cimagf(scratch_out[0]);
         scratch_out[0] = crealf(scratch_out[0]);
 
-        /* accumulate power */
-        if (0 == iframe_averaged) {
-            /* if this is the first (or only) fft of the incoherent averaging interval,
-             then take a fast path where we set the value instead of incrementing it */
-            for (size_t iw = 0; iw < F - 1; iw++)
-                spectrum_power[iw] = cmagsquaredf(scratch_out[iw]);
+        /* loop over frequency bins (may not be full range) */
+        for (size_t iw = 0; iw < F; iw++) {
+            /* dc and nyquist bins need to be weighted down to account for r2c fft */
+            const float power = (T / 2 == iw ? cmagsquaredf(nyquist_bin) * 0.5f :
+                                 0 == iw ? cmagsquaredf(scratch_out[iw]) * 0.5f :
+                                 cmagsquaredf(scratch_out[iw]));
+            const float dB = 10.0f * log10f(power);
 
-            /* handle the nyquist bin specially */
-            if (T / 2 < F) spectrum_power[T / 2] = cmagsquaredf(nyquist_bin);
-        } else {
-            for (size_t iw = 0; iw < F - 1; iw++)
-                spectrum_power[iw] += cmagsquaredf(scratch_out[iw]);
-
-            if (T / 2 < F) spectrum_power[T / 2] += cmagsquaredf(nyquist_bin);
+            spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
         }
 
-        iframe_averaged++;
-        if (fft_frames_per_average == iframe_averaged) {
-            iframe_averaged = 0;
+        ili9341_write_row_and_scroll(spectrum_quantized);
 
-            /* dc and nyquist bins need to be weighted down to account for r2c fft */
-            spectrum_power[0] *= 0.5f;
-            if (T / 2 < F) spectrum_power[T / 2] *= 0.5f;
+        if (enable_usb) {
+            /* write into first part of output line */
+            size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
 
-            /* map power to eight bit log scale values */
-            for (size_t iw = 0; iw < F; iw++) {
-                const float dB = 10.0f * log10f(spectrum_power[iw]);
-                spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
-            }
+            base64_encode(line_out + off, spectrum_quantized, F);
+            off += strlen_spectrum_encoded;
 
-            ili9341_write_row_and_scroll(spectrum_quantized);
+            /* finish line */
+            off += snprintf(line_out + off, outlen - off, "\r\n");
 
-            if (enable_usb) {
-                /* write into first part of output line */
-                size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
-
-                base64_encode(line_out + off, spectrum_quantized, F);
-                off += strlen_spectrum_encoded;
-
-                /* finish line */
-                off += snprintf(line_out + off, outlen - off, "\r\n");
-
-                /* emit line to usb cdc serial */
-                if (enable_usb && tud_cdc_connected())
-                    write_to_usb_cdc(line_out, off);
-            }
+            /* emit line to usb cdc serial */
+            if (enable_usb && tud_cdc_connected())
+                write_to_usb_cdc(line_out, off);
         }
     }
 
