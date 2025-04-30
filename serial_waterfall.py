@@ -61,7 +61,7 @@ def on_close(event):
 
 def child_thread(main_thread_work):
     global window_closed
-    scale = 0.75
+    scale = 0.375
     offset = -256 * scale
 
     sys.stdin.reconfigure(errors='ignore')

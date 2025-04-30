@@ -296,8 +296,8 @@ int main(void) {
     size_t ichunk_read = *(volatile size_t *)&ichunk_written;
     size_t iframe_averaged = 0;
 
-    /* output will be on [-192, 0) dB relative to full scale, in 0.75 dB increments */
-    const float out_scale = 0.75f;
+    /* output will be on [-96, 0) dB relative to full scale, in 0.75 dB increments */
+    const float out_scale = 0.375f;
     const float out_offset = -256.0f * out_scale;
     const float one_over_out_scale = 1.0f / out_scale;
 
