@@ -43,6 +43,9 @@
 static_assert(CHUNKS >= 4 && !(CHUNKS & (CHUNKS - 1)),
               "number of chunks must be a power of two, at least 4");
 
+static_assert((2 * SAMPLES_PER_CHUNK) / 2 + 1 >= 240,
+              "not enough frequency bins for display width");
+
 #define SAMPLE_RATE_NUMERATOR 48000000ULL
 unsigned long sample_rate_denominator = 1500;
 
@@ -216,7 +219,7 @@ int main(void) {
     /* initially we will pretend we are "caught up" with wherever the stream is now */
     size_t ichunk_read = *(volatile size_t *)&ichunk_written;
 
-    /* output will be on [-96, 0) dB relative to full scale, in 0.75 dB increments */
+    /* output will be on [-96, 0) dB relative to full scale, in 0.375 dB increments */
     const float out_scale = 0.375f;
     const float out_offset = -256.0f * out_scale;
     const float one_over_out_scale = 1.0f / out_scale;
@@ -260,6 +263,7 @@ int main(void) {
             spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
         }
 
+        /* send the newest line of pixels to the display, and scroll it by one pixel */
         ili9341_write_row_and_scroll(spectrum_quantized);
     }
 
