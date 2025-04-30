@@ -2,6 +2,7 @@
 
 #include "pico/time.h"
 #include "hardware/spi.h"
+#include "hardware/dma.h"
 #include "hardware/gpio.h"
 
 #define ILI9341_SWRESET 0x01
@@ -108,6 +109,17 @@ static uint16_t rgb555(const uint8_t r, const uint8_t g, const uint8_t b) {
     return ((r & 0b11111000) << 8U) | ((g & 0b11111100) << 3U) | (b >> 3U);
 }
 
+#define IDMA_SPI_WRITE 1
+
+static uint16_t mapped[240];
+
+void __scratch_y("") spi_dma_write_finish_handler(void) {
+    /* acknowledge the interrupt so that it doesn't re-fire */
+    dma_hw->ints1 = 1U << IDMA_SPI_WRITE;
+
+    cs_pin(1);
+}
+
 void ili9341_scrolling_init(void) {
     /* TODO: use 565 format */
     for (size_t ic = 0; ic < 256; ic++)
@@ -178,20 +190,42 @@ void ili9341_scrolling_init(void) {
     send_command_and_bytes_selected(ILI9341_VSCRDEF, 6, (const uint16_t[]) {
         __builtin_bswap16(0), __builtin_bswap16(320), __builtin_bswap16(0) });
     cs_pin(1);
+
+    dma_channel_claim(IDMA_SPI_WRITE);
+
+    dma_channel_acknowledge_irq1(IDMA_SPI_WRITE);
+    dma_channel_set_irq1_enabled(IDMA_SPI_WRITE, true);
+
+    irq_set_exclusive_handler(DMA_IRQ_1, spi_dma_write_finish_handler);
+    irq_set_enabled(DMA_IRQ_1, true);
 }
+
+extern void yield(void);
 
 void ili9341_write_row_and_scroll(const uint8_t bins[restrict static 240]) {
     static size_t iy_scroll = 0;
+
+    /* if previous write is still sending, wait before disturbing the buffer */
+    while (dma_channel_is_busy(IDMA_SPI_WRITE)) yield();
+
+    /* map 0-256 input values to colormap pixel values */
+    for (size_t ix = 0; ix < 240; ix++)
+        mapped[ix] = colormap_rgb555_swapped[bins[ix]];
 
     cs_pin(0);
     send_command_and_bytes_selected(ILI9341_VSCRSADD, 2, (const uint16_t[]) { __builtin_bswap16(iy_scroll % 320) });
     send_command_and_bytes_selected(ILI9341_PASET, 4, (const uint16_t[]) { __builtin_bswap16((iy_scroll + 319) % 320), __builtin_bswap16((iy_scroll + 319) % 320) });
     send_command_and_bytes_selected(ILI9341_RAMWR, 0, NULL);
 
-    /* TODO: use dma and make this non blocking */
-    for (size_t ix = 0; ix < 240; ix++)
-        spi_write_bytes(2, colormap_rgb555_swapped + bins[ix]);
+    dma_channel_config cfg = dma_channel_get_default_config(IDMA_SPI_WRITE);
+    channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+    channel_config_set_dreq(&cfg, spi_get_dreq(spi0, true));
+    channel_config_set_read_increment(&cfg, true);
+    channel_config_set_write_increment(&cfg, false);
 
-    cs_pin(1);
+    dma_channel_configure(IDMA_SPI_WRITE, &cfg,
+                          &spi_get_hw(spi0)->dr, mapped,
+                          sizeof(mapped), true);
+
     iy_scroll = (iy_scroll + 1) % 320;
 }

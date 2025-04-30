@@ -263,7 +263,10 @@ int main(void) {
             spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
         }
 
-        /* send the newest line of pixels to the display, and scroll it by one pixel */
+        /* send the newest line of pixels to the display, and scroll it by one pixel. this
+         is partially nonblocking, i.e. the function call will return after it has sent the
+         command bytes and has STARTED to send the 240 new pixel values, and will block
+         if the previous transaction is still ongoing */
         ili9341_write_row_and_scroll(spectrum_quantized);
     }
 
