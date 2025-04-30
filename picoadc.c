@@ -202,12 +202,13 @@ int main(void) {
     adc_dma_init();
 
     const char enable_usb = 1;
-    const char enable_serial = 0;
 
     /* turn off clocks to a bunch of stuff we aren't using, saves about 4 mW */
     clocks_hw->wake_en1 = (CLOCKS_WAKE_EN1_BITS &
                            ~(CLOCKS_WAKE_EN1_CLK_SYS_UART1_BITS |
                              CLOCKS_WAKE_EN1_CLK_PERI_UART1_BITS |
+                             CLOCKS_WAKE_EN1_CLK_SYS_UART0_BITS |
+                             CLOCKS_WAKE_EN1_CLK_PERI_UART0_BITS |
                              CLOCKS_WAKE_EN1_CLK_SYS_TRNG_BITS |
                              CLOCKS_WAKE_EN1_CLK_SYS_TIMER1_BITS |
                              CLOCKS_WAKE_EN1_CLK_SYS_TIMER0_BITS |
@@ -412,15 +413,17 @@ int main(void) {
                     gpio_put(PICO_DEFAULT_LED_PIN, 0);
             } while(0);
 
-            if (enable_usb || enable_serial) {
+            /* map power to eight bit log scale values */
+            for (size_t iw = 0; iw < F; iw++) {
+                const float dB = 10.0f * log10f(spectrum_power[iw]);
+                spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
+            }
+
+            ili9341_write_row_and_scroll(spectrum_quantized);
+
+            if (enable_usb) {
                 /* write into first part of output line */
                 size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
-
-                /* map power to eight bit log scale values */
-                for (size_t iw = 0; iw < F; iw++) {
-                    const float dB = 10.0f * log10f(spectrum_power[iw]);
-                    spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
-                }
 
                 base64_encode(line_out + off, spectrum_quantized, F);
                 off += strlen_spectrum_encoded;
@@ -431,10 +434,6 @@ int main(void) {
                 /* emit line to usb cdc serial */
                 if (enable_usb && tud_cdc_connected())
                     write_to_usb_cdc(line_out, off);
-
-                /* emit line to uart */
-                if (enable_serial)
-                    write(1, line_out, off);
             }
         }
     }
