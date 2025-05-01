@@ -106,7 +106,7 @@ static const unsigned char colormap[256][3] = {
 static uint16_t colormap_rgb565_swapped[256];
 
 static uint16_t rgb565(const uint8_t r, const uint8_t g, const uint8_t b) {
-    return ((r & 0b11111000) << 8U) | ((g & 0b11111100) << 3U) | (b >> 3U);
+    return ((r >> 3U) << 11U) | ((g >> 2U) << 5U) | (b >> 3U);
 }
 
 #define IDMA_SPI_WRITE 1
