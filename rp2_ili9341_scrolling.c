@@ -103,9 +103,9 @@ static const unsigned char colormap[256][3] = {
     {152, 14, 1}, {149, 13, 1}, {146, 11, 1}, {142, 10, 1}, {139, 9, 2}, {136, 8, 2},
     {133, 7, 2}, {129, 6, 2}, {126, 5, 2}, {122, 4, 3} };
 
-static uint16_t colormap_rgb555_swapped[256];
+static uint16_t colormap_rgb565_swapped[256];
 
-static uint16_t rgb555(const uint8_t r, const uint8_t g, const uint8_t b) {
+static uint16_t rgb565(const uint8_t r, const uint8_t g, const uint8_t b) {
     return ((r & 0b11111000) << 8U) | ((g & 0b11111100) << 3U) | (b >> 3U);
 }
 
@@ -121,9 +121,8 @@ void __scratch_y("") spi_dma_write_finish_handler(void) {
 }
 
 void ili9341_scrolling_init(void) {
-    /* TODO: use 565 format */
     for (size_t ic = 0; ic < 256; ic++)
-        colormap_rgb555_swapped[ic] = __builtin_bswap16(rgb555(colormap[ic][0], colormap[ic][1], colormap[ic][2]));
+        colormap_rgb565_swapped[ic] = __builtin_bswap16(rgb565(colormap[ic][0], colormap[ic][1], colormap[ic][2]));
 
     /* wait until power has been on for a bit */
     sleep_ms(150);
@@ -180,7 +179,7 @@ void ili9341_scrolling_init(void) {
     send_command_and_bytes_selected(ILI9341_PASET, 4, (const uint16_t[]) { __builtin_bswap16(0), __builtin_bswap16(319) });
     send_command_and_bytes_selected(ILI9341_RAMWR, 0, NULL);
 
-    const uint16_t black = __builtin_bswap16(rgb555(0, 0, 0));
+    const uint16_t black = __builtin_bswap16(rgb565(0, 0, 0));
     for (size_t iy = 0; iy < 320; iy++)
         for (size_t ix = 0; ix < 240; ix++)
             spi_write_bytes(2, &black);
@@ -210,7 +209,7 @@ void ili9341_write_row_and_scroll(const uint8_t bins[restrict static 240]) {
 
     /* map 0-256 input values to colormap pixel values */
     for (size_t ix = 0; ix < 240; ix++)
-        mapped[ix] = colormap_rgb555_swapped[bins[ix]];
+        mapped[ix] = colormap_rgb565_swapped[bins[ix]];
 
     cs_pin(0);
     send_command_and_bytes_selected(ILI9341_VSCRSADD, 2, (const uint16_t[]) { __builtin_bswap16(iy_scroll % 320) });
