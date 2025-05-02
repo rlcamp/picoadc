@@ -6,19 +6,9 @@ if (NOT DEFINED ENV{PICO_SDK_PATH})
   set(ENV{PICO_SDK_PATH} "~/Downloads/pico-sdk/")
 endif()
 
-# first look for arm-none-eabi-gcc where the arm .pkg file would put it
 if (NOT DEFINED PICO_TOOLCHAIN_PATH)
     execute_process(
-        COMMAND bash -c "dirname $(find /Applications/ArmGNUToolchain -name arm-none-eabi-gcc 2>/dev/null | sort | tail -n1)"
-        OUTPUT_VARIABLE PICO_TOOLCHAIN_PATH
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-endif()
-
-# if that didn't work, look for it in ~/Downloads, which is more expensive
-if (NOT DEFINED PICO_TOOLCHAIN_PATH)
-    execute_process(
-        COMMAND bash -c "dirname $(find $\{HOME\}/Downloads -name arm-none-eabi-gcc 2>/dev/null | sort | tail -n1)"
+        COMMAND bash -c "dirname $((find $\{HOME\}/Downloads -name arm-none-eabi-gcc | sort; find /Applications/ArmGNUToolchain -name arm-none-eabi-gcc | sort) | tail -n1)"
         OUTPUT_VARIABLE PICO_TOOLCHAIN_PATH
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
