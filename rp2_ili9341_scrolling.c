@@ -185,11 +185,6 @@ void ili9341_scrolling_init(void) {
             spi_write_bytes(2, &black);
     cs_pin(1);
 
-    cs_pin(0);
-    send_command_and_bytes_selected(ILI9341_VSCRDEF, 6, (const uint16_t[]) {
-        __builtin_bswap16(0), __builtin_bswap16(320), __builtin_bswap16(0) });
-    cs_pin(1);
-
     dma_channel_claim(IDMA_SPI_WRITE);
 
     dma_channel_acknowledge_irq1(IDMA_SPI_WRITE);
@@ -212,6 +207,8 @@ void ili9341_write_row_and_scroll(const uint8_t bins[restrict static 240]) {
         mapped[ix] = colormap_rgb565_swapped[bins[ix]];
 
     cs_pin(0);
+    send_command_and_bytes_selected(ILI9341_VSCRDEF, 6, (const uint16_t[]) {
+        __builtin_bswap16(0), __builtin_bswap16(320), __builtin_bswap16(0) });
     send_command_and_bytes_selected(ILI9341_VSCRSADD, 2, (const uint16_t[]) { __builtin_bswap16(iy_scroll % 320) });
     send_command_and_bytes_selected(ILI9341_PASET, 4, (const uint16_t[]) { __builtin_bswap16((iy_scroll + 319) % 320), __builtin_bswap16((iy_scroll + 319) % 320) });
     send_command_and_bytes_selected(ILI9341_RAMWR, 0, NULL);
