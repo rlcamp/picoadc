@@ -47,7 +47,7 @@ static_assert((2 * SAMPLES_PER_CHUNK) / 2 + 1 >= 240,
               "not enough frequency bins for display width");
 
 #define SAMPLE_RATE_NUMERATOR 48000000ULL
-unsigned long sample_rate_denominator = 1500;
+unsigned long sample_rate_denominator = 3000;
 
 void yield(void) {
     /* we could do context switching here for cooperative multitasking if we wanted */
