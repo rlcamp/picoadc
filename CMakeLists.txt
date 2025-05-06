@@ -37,6 +37,8 @@ set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS}  -Wall -Wextra -Wshadow")
 # which make them insanely slow and power hungry for no practical benefit
 set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS} -O3 -ffinite-math-only -fno-signed-zeros -fno-rounding-math -fno-trapping-math -fno-math-errno -fcx-limited-range")
 
+target_compile_definitions(picoadc PUBLIC ENABLE_LCD)
+
 # pull in common dependencies
 target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_pwm hardware_spi)
 

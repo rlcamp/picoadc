@@ -11,7 +11,9 @@
 #include "RP2350.h"
 
 #include "fft_anywhere.h"
+#ifdef ENABLE_LCD
 #include "rp2_ili9341_scrolling.h"
+#endif
 
 /* c standard includes */
 #include <math.h>
@@ -156,7 +158,9 @@ int main(void) {
 
     adc_dma_init();
 
+#ifdef ENABLE_LCD
     ili9341_scrolling_init();
+#endif
 
     /* turn off clocks to a bunch of stuff we aren't using, saves about 4 mW */
     clocks_hw->wake_en1 = (CLOCKS_WAKE_EN1_BITS &
@@ -182,6 +186,11 @@ int main(void) {
                              CLOCKS_WAKE_EN0_CLK_SYS_I2C0_BITS |
                              CLOCKS_WAKE_EN0_CLK_SYS_HSTX_BITS |
                              CLOCKS_WAKE_EN0_CLK_HSTX_BITS));
+
+#ifndef ENABLE_LCD
+    clocks_hw->wake_en1 &= ~(CLOCKS_WAKE_EN1_CLK_SYS_SPI0_BITS |
+                             CLOCKS_WAKE_EN1_CLK_PERI_SPI0_BITS);
+#endif
 
     /* make sure we don't clock anything in sleep that wasn't clocked in wake */
     clocks_hw->sleep_en1 = clocks_hw->wake_en1;
@@ -263,11 +272,13 @@ int main(void) {
             spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
         }
 
+#ifdef ENABLE_LCD
         /* send the newest line of pixels to the display, and scroll it by one pixel. this
          is partially nonblocking, i.e. the function call will return after it has sent the
          command bytes and has STARTED to send the 240 new pixel values, and will block
          if the previous transaction is still ongoing */
         ili9341_write_row_and_scroll(spectrum_quantized);
+#endif
     }
 
     /* not reached */
