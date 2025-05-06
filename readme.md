@@ -18,4 +18,10 @@ These assume a vanilla ARM64 Mac running Sonoma, with Xcode or at least its comm
 ### Upload and run this code
 
 - Hold down BOOTSEL while plugging into USB
-- `cp build/picoadc.uf2 /Volumes/RP2350`
+- `cp build/picoadc_lcd.uf2 /Volumes/RP2350`
+
+### Alt version with USB output
+
+- Hold down BOOTSEL while plugging into USB
+- `cp build/picoadc_usb.uf2 /Volumes/RP2350`
+- `./serial_waterfall.py /dev/tty.usbmodem[press tab to complete]`
