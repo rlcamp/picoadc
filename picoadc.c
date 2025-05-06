@@ -186,12 +186,10 @@ char * base64_encode(char * dest, const void * plainv, const size_t plain_size) 
         encoded[1] = symbols[(merged >> 12) & 0x3F];
         encoded[2] = (2 == plain_size % 3) ? symbols[(merged >> 6) & 0x3F] : '=';
         encoded[3] = '=';
-        encoded[4] = '\0';
+        return encoded + 3;
     }
     else
-        encoded[0] = '\0';
-
-    return encoded_start;
+        return encoded;
 }
 
 int main(void) {
@@ -284,6 +282,10 @@ int main(void) {
       a buffer of that length, including its zero termination */
     const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
     char * restrict const line_out = malloc(outlen);
+
+    /* write into first part of output line */
+    const size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
+    char * line_out_data = line_out + off;
 #endif
 
     uint8_t * restrict const spectrum_quantized = malloc(sizeof(uint8_t) * F);
@@ -357,18 +359,14 @@ int main(void) {
 #endif
 
 #ifdef ENABLE_USB
-        /* write into first part of output line */
-        size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
-
-        base64_encode(line_out + off, spectrum_quantized, F);
-        off += strlen_spectrum_encoded;
+        char * line_out_termination = base64_encode(line_out_data, spectrum_quantized, F);
 
         /* finish line */
-        off += snprintf(line_out + off, outlen - off, "\r\n");
+        memcpy(line_out_termination, "\r\n", 2);
 
         /* emit line to usb cdc serial */
         if (tud_cdc_connected())
-            write_to_usb_cdc(line_out, off);
+            write_to_usb_cdc(line_out, line_out_termination + 2 - line_out);
 #endif
     }
 
