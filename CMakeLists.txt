@@ -22,13 +22,6 @@ project(my_project)
 # initialize the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# rest of your project
-add_executable(picoadc
-    picoadc.c
-    fft_anywhere.c
-    rp2_ili9341_scrolling.c
-)
-
 # add some warning flags
 set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS}  -Wall -Wextra -Wshadow")
 
@@ -37,13 +30,15 @@ set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS}  -Wall -Wextra -Wshadow")
 # which make them insanely slow and power hungry for no practical benefit
 set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS} -O3 -ffinite-math-only -fno-signed-zeros -fno-rounding-math -fno-trapping-math -fno-math-errno -fcx-limited-range")
 
+add_executable(picoadc
+    picoadc.c
+    fft_anywhere.c
+    rp2_ili9341_scrolling.c
+)
+
 target_compile_definitions(picoadc PUBLIC ENABLE_LCD)
 
-# pull in common dependencies
-target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_pwm hardware_spi)
-
-pico_enable_stdio_usb(picoadc 0)
-pico_enable_stdio_uart(picoadc 0)
+target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_spi)
 
 # create map/bin/hex/uf2 file in addition to ELF.
 pico_add_extra_outputs(picoadc)
