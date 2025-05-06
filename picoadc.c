@@ -15,6 +15,12 @@
 #include "rp2_ili9341_scrolling.h"
 #endif
 
+#ifdef ENABLE_USB
+/* non-rp2350-specific stuff we need for the tinyusb library */
+#include "bsp/board_api.h"
+#include <tusb.h>
+#endif
+
 /* c standard includes */
 #include <math.h>
 #include <stdlib.h>
@@ -151,6 +157,43 @@ static float cmagsquaredf(const float complex a) {
     return crealf(a) * crealf(a) + cimagf(a) * cimagf(a);
 }
 
+extern void write_to_usb_cdc(const char * buf, size_t length);
+
+size_t base64_encoded_size_including_null_termination(const size_t plain_size) {
+    return ((plain_size + 2) / 3) * 4 + 1;
+}
+
+char * base64_encode(char * dest, const void * plainv, const size_t plain_size) {
+    static const char symbols[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const unsigned char * plain = plainv;
+    const size_t encoded_size = base64_encoded_size_including_null_termination(plain_size) - 1;
+    char * encoded_start = dest ? dest : malloc(encoded_size + 1);
+    char * encoded = encoded_start;
+
+    /* loop over all complete groups of four encoded, three decoded bytes */
+    for (const unsigned char * const stop = plain + plain_size - 2; plain < stop; encoded += 4, plain += 3) {
+        const unsigned int merged = plain[0] << 16 | plain[1] << 8 | plain[2];
+        encoded[0] = symbols[(merged >> 18) & 0x3F];
+        encoded[1] = symbols[(merged >> 12) & 0x3F];
+        encoded[2] = symbols[(merged >>  6) & 0x3F];
+        encoded[3] = symbols[(merged      ) & 0x3F];
+    }
+
+    /* handle partial group at end */
+    if (plain_size % 3) {
+        const unsigned int merged = plain[0] << 16 | (2 == plain_size % 3 ? plain[1] << 8 : 0);
+        encoded[0] = symbols[(merged >> 18) & 0x3F];
+        encoded[1] = symbols[(merged >> 12) & 0x3F];
+        encoded[2] = (2 == plain_size % 3) ? symbols[(merged >> 6) & 0x3F] : '=';
+        encoded[3] = '=';
+        encoded[4] = '\0';
+    }
+    else
+        encoded[0] = '\0';
+
+    return encoded_start;
+}
+
 int main(void) {
     /* this is not a terribly cpu intensive program, so leave the main clock at 48 MHz
      note that this requires the USB PLL to be left enabled even if not used otherwise */
@@ -162,10 +205,17 @@ int main(void) {
     ili9341_scrolling_init();
 #endif
 
+#ifdef ENABLE_USB
+    board_init();
+    tusb_init();
+
+    if (board_init_after_tusb)
+        board_init_after_tusb();
+#endif
+
     /* turn off clocks to a bunch of stuff we aren't using, saves about 4 mW */
     clocks_hw->wake_en1 = (CLOCKS_WAKE_EN1_BITS &
-                           ~(CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS |
-                             CLOCKS_WAKE_EN1_CLK_SYS_UART1_BITS |
+                           ~(CLOCKS_WAKE_EN1_CLK_SYS_UART1_BITS |
                              CLOCKS_WAKE_EN1_CLK_PERI_UART1_BITS |
                              CLOCKS_WAKE_EN1_CLK_SYS_UART0_BITS |
                              CLOCKS_WAKE_EN1_CLK_PERI_UART0_BITS |
@@ -190,6 +240,10 @@ int main(void) {
 #ifndef ENABLE_LCD
     clocks_hw->wake_en1 &= ~(CLOCKS_WAKE_EN1_CLK_SYS_SPI0_BITS |
                              CLOCKS_WAKE_EN1_CLK_PERI_SPI0_BITS);
+#endif
+
+#ifndef ENABLE_USB
+    clocks_hw->wake_en1 &= ~CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS;
 #endif
 
     /* make sure we don't clock anything in sleep that wasn't clocked in wake */
@@ -218,6 +272,20 @@ int main(void) {
     float complex * restrict const scratch_out = malloc(sizeof(float complex) * T / 2);
     float * restrict const window = malloc(sizeof(float) * (T / 2 + 1));
 
+#if ENABLE_USB
+    const float fs = SAMPLE_RATE_NUMERATOR / (float)sample_rate_denominator;
+
+    /* the actual resulting pixel spacings, in frequency and time respectively */
+    const float df = fs / T, dt = 0.5f * T / fs;
+
+    const size_t strlen_spectrum_encoded = base64_encoded_size_including_null_termination(F) - 1;
+
+    /* figure out the maximum length of each line of text that will be emitted and allocate
+      a buffer of that length, including its zero termination */
+    const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
+    char * restrict const line_out = malloc(outlen);
+#endif
+
     uint8_t * restrict const spectrum_quantized = malloc(sizeof(uint8_t) * F);
 
     /* hann window, exploiting symmetry, normalized such that a full scale real-valued sine
@@ -235,10 +303,18 @@ int main(void) {
 
     /* inner loop over chunks of data */
     while (1) {
+#if ENABLE_USB
+        tud_task();
+#endif
         /* wait until there is a new chunk of data. note the forced volatile read of a not
          otherwise volatile value, which tells the compiler it is not allowed to assume
          it already knows what this value is because it just read it */
-        while (ichunk_read == *(volatile size_t *)&ichunk_written) yield();
+        while (ichunk_read == *(volatile size_t *)&ichunk_written) {
+#if ENABLE_USB
+            tud_task();
+#endif
+            yield();
+        }
 
         /* get pointers to most recent two chunks, and advance the read cursor */
         const int16_t * restrict chunk_prev = adc_chunks[(ichunk_read - 1) % CHUNKS];
@@ -278,6 +354,21 @@ int main(void) {
          command bytes and has STARTED to send the 240 new pixel values, and will block
          if the previous transaction is still ongoing */
         ili9341_write_row_and_scroll(spectrum_quantized);
+#endif
+
+#ifdef ENABLE_USB
+        /* write into first part of output line */
+        size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
+
+        base64_encode(line_out + off, spectrum_quantized, F);
+        off += strlen_spectrum_encoded;
+
+        /* finish line */
+        off += snprintf(line_out + off, outlen - off, "\r\n");
+
+        /* emit line to usb cdc serial */
+        if (tud_cdc_connected())
+            write_to_usb_cdc(line_out, off);
 #endif
     }
 

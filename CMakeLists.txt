@@ -30,15 +30,38 @@ set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS}  -Wall -Wextra -Wshadow")
 # which make them insanely slow and power hungry for no practical benefit
 set("CMAKE_C_FLAGS" "${CMAKE_C_FLAGS} -O3 -ffinite-math-only -fno-signed-zeros -fno-rounding-math -fno-trapping-math -fno-math-errno -fcx-limited-range")
 
-add_executable(picoadc
+add_executable(picoadc_lcd
     picoadc.c
     fft_anywhere.c
     rp2_ili9341_scrolling.c
 )
 
-target_compile_definitions(picoadc PUBLIC ENABLE_LCD)
+add_executable(picoadc_usb
+    picoadc.c
+    fft_anywhere.c
+    usb_descriptors.c
+)
 
-target_link_libraries(picoadc pico_stdlib cmsis_core hardware_adc hardware_dma hardware_spi)
+add_executable(picoadc_lcd_usb
+    picoadc.c
+    fft_anywhere.c
+    rp2_ili9341_scrolling.c
+    usb_descriptors.c
+)
+
+target_compile_definitions(picoadc_lcd PUBLIC ENABLE_LCD)
+target_compile_definitions(picoadc_usb PUBLIC ENABLE_USB)
+target_compile_definitions(picoadc_lcd_usb PUBLIC ENABLE_USB ENABLE_LCD)
+
+# make sure TinyUSB can find tusb_config.h
+target_include_directories(picoadc_usb PUBLIC ${CMAKE_CURRENT_LIST_DIR})
+target_include_directories(picoadc_lcd_usb PUBLIC ${CMAKE_CURRENT_LIST_DIR})
+
+target_link_libraries(picoadc_lcd pico_stdlib cmsis_core hardware_adc hardware_dma hardware_spi)
+target_link_libraries(picoadc_usb pico_stdlib cmsis_core hardware_adc hardware_dma tinyusb_board tinyusb_device)
+target_link_libraries(picoadc_lcd_usb pico_stdlib cmsis_core hardware_adc hardware_dma hardware_spi tinyusb_board tinyusb_device)
 
 # create map/bin/hex/uf2 file in addition to ELF.
-pico_add_extra_outputs(picoadc)
+pico_add_extra_outputs(picoadc_lcd)
+pico_add_extra_outputs(picoadc_usb)
+pico_add_extra_outputs(picoadc_lcd_usb)
