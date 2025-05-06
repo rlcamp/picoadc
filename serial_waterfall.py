@@ -95,7 +95,7 @@ def main():
     iy = 0
 
     # constants you might want to fiddle with. TODO: allow main() to modify these
-    clim=(-106, 0)
+    clim=(-96, 0)
 
     # create an empty figure but don't show it yet
     fig = plt.figure()
