@@ -113,13 +113,6 @@ static uint16_t rgb565(const uint8_t r, const uint8_t g, const uint8_t b) {
 
 static uint16_t mapped[240];
 
-void __scratch_y("") spi_dma_write_finish_handler(void) {
-    /* acknowledge the interrupt so that it doesn't re-fire */
-    dma_hw->ints1 = 1U << IDMA_SPI_WRITE;
-
-    cs_pin(1);
-}
-
 void ili9341_scrolling_init(void) {
     for (size_t ic = 0; ic < 256; ic++)
         colormap_rgb565_swapped[ic] = __builtin_bswap16(rgb565(colormap[ic][0], colormap[ic][1], colormap[ic][2]));
@@ -186,12 +179,6 @@ void ili9341_scrolling_init(void) {
     cs_pin(1);
 
     dma_channel_claim(IDMA_SPI_WRITE);
-
-    dma_channel_acknowledge_irq1(IDMA_SPI_WRITE);
-    dma_channel_set_irq1_enabled(IDMA_SPI_WRITE, true);
-
-    irq_set_exclusive_handler(DMA_IRQ_1, spi_dma_write_finish_handler);
-    irq_set_enabled(DMA_IRQ_1, true);
 }
 
 extern void yield(void);
@@ -201,6 +188,8 @@ void ili9341_write_row_and_scroll(const uint8_t bins[restrict static 240]) {
 
     /* if previous write is still sending, wait before disturbing the buffer */
     while (dma_channel_is_busy(IDMA_SPI_WRITE)) yield();
+
+    cs_pin(1);
 
     /* map 0-256 input values to colormap pixel values */
     for (size_t ix = 0; ix < 240; ix++)
