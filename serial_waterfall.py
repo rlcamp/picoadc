@@ -18,7 +18,7 @@ import os
 import numpy as np
 
 import matplotlib
-matplotlib.rcParams['toolbar'] = 'None'
+#matplotlib.rcParams['toolbar'] = 'None'
 
 # if text gets piled on top of other text, try messing with this logic. the same settings do
 # not seem to give satisfactory results on all combinations of OS and screen dpi. if someone
