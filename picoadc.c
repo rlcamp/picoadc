@@ -186,7 +186,7 @@ char * base64_encode(char * dest, const void * plainv, const size_t plain_size) 
         encoded[1] = symbols[(merged >> 12) & 0x3F];
         encoded[2] = (2 == plain_size % 3) ? symbols[(merged >> 6) & 0x3F] : '=';
         encoded[3] = '=';
-        return encoded + 3;
+        return encoded + 4;
     }
     else
         return encoded;
