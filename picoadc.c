@@ -193,6 +193,11 @@ char * base64_encode(char * dest, const void * plainv, const size_t plain_size) 
 }
 
 int main(void) {
+    /* hack: prevent tud_task from acting like sev and keeping the processor awake. this
+     does change how pico spinlocks and other atomics work across multiple cores, assuming
+     we ever want to enable the second core */
+    m33_hw->actlr &= ~M33_ACTLR_EXTEXCLALL_BITS;
+
     /* this is not a terribly cpu intensive program, so leave the main clock at 48 MHz
      note that this requires the USB PLL to be left enabled even if not used otherwise */
     set_sys_clock_48mhz();
