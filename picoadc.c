@@ -193,11 +193,6 @@ char * base64_encode(char * dest, const void * plainv, const size_t plain_size) 
 }
 
 int main(void) {
-    /* hack: prevent tud_task from acting like sev and keeping the processor awake. this
-     does change how pico spinlocks and other atomics work across multiple cores, assuming
-     we ever want to enable the second core */
-    m33_hw->actlr &= ~M33_ACTLR_EXTEXCLALL_BITS;
-
     /* this is not a terribly cpu intensive program, so leave the main clock at 48 MHz
      note that this requires the USB PLL to be left enabled even if not used otherwise */
     set_sys_clock_48mhz();
@@ -318,6 +313,8 @@ int main(void) {
          it already knows what this value is because it just read it */
         while (ichunk_read == *(volatile size_t *)&ichunk_written) {
 #if ENABLE_USB
+            /* note that with EXTEXCLALL this acts like sev, which turns this into a spinloop
+             if tinyusb is compiled with pico specific osal stuff, so we disable the latter */
             tud_task();
 #endif
             yield();

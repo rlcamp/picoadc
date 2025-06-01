@@ -17,4 +17,8 @@
 #define CFG_TUD_ENDPOINT0_SIZE  (64)
 #endif
 
+/* disable pico-sdk specific optimizations, which turn tud_task into sev */
+#undef CFG_TUSB_OS
+#define CFG_TUSB_OS OPT_OS_NONE
+
 #endif
