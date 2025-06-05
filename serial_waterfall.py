@@ -71,8 +71,14 @@ def child_thread(main_thread_work):
 
         try:
             df_text, dt_text, levels_text = line.split(',')
+        except:
+            continue
+
+        try:
             levels = np.frombuffer(base64.b64decode(levels_text), dtype=np.uint8) * scale + offset
-        except: continue
+        except:
+            print('bad base64 decode', file=sys.stderr)
+            continue
 
         packet_tuple = namedtuple('packet', [ 'levels', 'f0', 'df', 'dt'])
         main_thread_work.put(packet_tuple(levels = levels,
