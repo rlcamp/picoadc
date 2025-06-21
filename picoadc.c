@@ -166,7 +166,10 @@ char * base64_encode(char * dest, const void * plainv, const size_t plain_size) 
     const unsigned char * plain = plainv;
     const size_t encoded_size = base64_encoded_size_including_null_termination(plain_size) - 1;
     char * encoded_start = dest ? dest : malloc(encoded_size + 1);
-    char * encoded = encoded_start;
+
+    /* since we might be writing directly into usb memory, we need the below groups of
+     four bytes to NOT get optimized to word-aligned writes */
+    volatile char * encoded = encoded_start;
 
     /* loop over all complete groups of four encoded, three decoded bytes */
     for (const unsigned char * const stop = plain + plain_size - 2; plain < stop; encoded += 4, plain += 3) {
@@ -184,10 +187,10 @@ char * base64_encode(char * dest, const void * plainv, const size_t plain_size) 
         encoded[1] = symbols[(merged >> 12) & 0x3F];
         encoded[2] = (2 == plain_size % 3) ? symbols[(merged >> 6) & 0x3F] : '=';
         encoded[3] = '=';
-        return encoded + 4;
+        return (char *)encoded + 4;
     }
     else
-        return encoded;
+        return (char *)encoded;
 }
 
 int main(void) {
@@ -275,7 +278,7 @@ int main(void) {
     /* figure out the maximum length of each line of text that will be emitted and allocate
       a buffer of that length, including its zero termination */
     const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
-    char * restrict const line_out = malloc(outlen);
+    char * restrict const line_out = usb_cdc_serial_tx_staging_area();
 
     /* write into first part of output line */
     const size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
@@ -349,10 +352,7 @@ int main(void) {
         char * line_out_termination = base64_encode(line_out_data, spectrum_quantized, F);
 
         /* finish line */
-        memcpy(line_out_termination, "\r\n", 2);
-
-        /* TODO: figure out why we need to stage elsewhere and then unaligned memcpy here */
-        unaligned_memcpy(usb_cdc_serial_tx_staging_area(), line_out, line_out_termination + 2 - line_out);
+        unaligned_memcpy(line_out_termination, "\r\n", 2);
 
         /* emit line to usb cdc serial */
         if (get_dtr())
