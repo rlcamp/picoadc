@@ -164,12 +164,10 @@ size_t base64_encoded_size_including_null_termination(const size_t plain_size) {
 char * base64_encode(char * dest, const void * plainv, const size_t plain_size) {
     static const char symbols[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     const unsigned char * plain = plainv;
-    const size_t encoded_size = base64_encoded_size_including_null_termination(plain_size) - 1;
-    char * encoded_start = dest ? dest : malloc(encoded_size + 1);
 
     /* since we might be writing directly into usb memory, we need the below groups of
      four bytes to NOT get optimized to word-aligned writes */
-    volatile char * encoded = encoded_start;
+    volatile char * encoded = dest;
 
     /* loop over all complete groups of four encoded, three decoded bytes */
     for (const unsigned char * const stop = plain + plain_size - 2; plain < stop; encoded += 4, plain += 3) {
