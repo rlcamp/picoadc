@@ -16,9 +16,9 @@
 #endif
 
 #ifdef ENABLE_USB
-/* non-rp2350-specific stuff we need for the tinyusb library */
-#include "bsp/board_api.h"
-#include <tusb.h>
+#include "rp2350_usb_cdc_serial.h"
+#include <stdio.h>
+#include <string.h>
 #endif
 
 /* c standard includes */
@@ -157,8 +157,6 @@ static float cmagsquaredf(const float complex a) {
     return crealf(a) * crealf(a) + cimagf(a) * cimagf(a);
 }
 
-extern void write_to_usb_cdc(const char * buf, size_t length);
-
 size_t base64_encoded_size_including_null_termination(const size_t plain_size) {
     return ((plain_size + 2) / 3) * 4 + 1;
 }
@@ -204,11 +202,7 @@ int main(void) {
 #endif
 
 #ifdef ENABLE_USB
-    board_init();
-    tusb_init();
-
-    if (board_init_after_tusb)
-        board_init_after_tusb();
+    usb_cdc_serial_init();
 #endif
 
     /* turn off clocks to a bunch of stuff we aren't using, saves about 4 mW */
@@ -305,20 +299,11 @@ int main(void) {
 
     /* inner loop over chunks of data */
     while (1) {
-#if ENABLE_USB
-        tud_task();
-#endif
         /* wait until there is a new chunk of data. note the forced volatile read of a not
          otherwise volatile value, which tells the compiler it is not allowed to assume
          it already knows what this value is because it just read it */
-        while (ichunk_read == *(volatile size_t *)&ichunk_written) {
-#if ENABLE_USB
-            /* note that with EXTEXCLALL this acts like sev, which turns this into a spinloop
-             if tinyusb is compiled with pico specific osal stuff, so we disable the latter */
-            tud_task();
-#endif
+        while (ichunk_read == *(volatile size_t *)&ichunk_written)
             yield();
-        }
 
         /* get pointers to most recent two chunks, and advance the read cursor */
         const int16_t * restrict chunk_prev = adc_chunks[(ichunk_read - 1) % CHUNKS];
@@ -366,9 +351,12 @@ int main(void) {
         /* finish line */
         memcpy(line_out_termination, "\r\n", 2);
 
+        /* TODO: figure out why we need to stage elsewhere and then unaligned memcpy here */
+        unaligned_memcpy(usb_cdc_serial_tx_staging_area(), line_out, line_out_termination + 2 - line_out);
+
         /* emit line to usb cdc serial */
-        if (tud_cdc_connected())
-            write_to_usb_cdc(line_out, line_out_termination + 2 - line_out);
+        if (get_dtr())
+            usb_cdc_serial_tx_start(line_out_termination + 2 - line_out);
 #endif
     }
 
