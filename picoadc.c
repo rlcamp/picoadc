@@ -354,7 +354,7 @@ int main(void) {
         unaligned_memcpy(line_out_termination, "\r\n", 2);
 
         /* emit line to usb cdc serial */
-        if (get_dtr())
+        if (usb_cdc_serial_dtr_is_high())
             usb_cdc_serial_tx_start(line_out_termination + 2 - line_out);
 #endif
     }

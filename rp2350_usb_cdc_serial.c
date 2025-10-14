@@ -50,6 +50,8 @@
 #define CDC_SET_CONTROL_LINE_STATE 0x22
 #define CDC_SEND_BREAK 0x23
 
+size_t seq_errors = 0;
+
 struct usb_setup_packet {
     uint8_t bmRequestType;
     uint8_t bRequest;
@@ -214,14 +216,14 @@ static inline uint32_t usb_buffer_offset(volatile unsigned char * buf) {
 }
 
 void usb_cdc_serial_init(void) {
+    /* temporarily disable this until below init is finished */
+    irq_set_enabled(USBCTRL_IRQ, false);
+
     /* reset peripheral */
     reset_unreset_block_num_wait_blocking(RESET_USBCTRL);
 
     /* clear dpram */
     memset(usb_dpram, 0, sizeof(*usb_dpram));
-
-    /* enable usb interrupt in nvic */
-    irq_set_enabled(USBCTRL_IRQ, true);
 
     /* enable usb pin mux */
     usb_hw->muxing = USB_USB_MUXING_TO_PHY_BITS | USB_USB_MUXING_SOFTCON_BITS;
@@ -236,7 +238,7 @@ void usb_cdc_serial_init(void) {
     usb_hw->sie_ctrl = USB_SIE_CTRL_EP0_INT_1BUF_BITS;
 
     /* enable interrupts we will react to */
-    usb_hw->inte = USB_INTS_BUFF_STATUS_BITS | USB_INTS_BUS_RESET_BITS | USB_INTS_SETUP_REQ_BITS;
+    usb_hw->inte = USB_INTE_BUFF_STATUS_BITS | USB_INTE_BUS_RESET_BITS | USB_INTE_SETUP_REQ_BITS;
 
     *ep1_in->ep_ctrl = (EP_CTRL_ENABLE_BITS |
                         EP_CTRL_INTERRUPT_PER_BUFFER |
@@ -256,14 +258,25 @@ void usb_cdc_serial_init(void) {
 
     /* pull up on dp to indicate full speed */
     usb_hw_set->sie_ctrl = USB_SIE_CTRL_PULLUP_EN_BITS;
+
+    enumerated = 0;
+
+    /* make sure all writes to sram have finished before isr fires */
+    __dsb();
+
+    /* enable usb interrupt in nvic */
+    irq_set_enabled(USBCTRL_IRQ, true);
 }
 
 static void usb_start_out_transfer(struct usb_endpoint_configuration * ep, const size_t len) {
     /* handle a single OUT packet at a time */
     assert(len <= 64);
 
-    *ep->ep_buf_ctrl = (len | USB_BUF_CTRL_AVAIL |
-                        (ep->next_pid ? USB_BUF_CTRL_DATA1_PID : USB_BUF_CTRL_DATA0_PID));
+    const uint32_t val = len | (ep->next_pid ? USB_BUF_CTRL_DATA1_PID : USB_BUF_CTRL_DATA0_PID);
+    *ep->ep_buf_ctrl = val;
+    asm volatile("nop;nop;nop" :::);
+    *ep->ep_buf_ctrl = val | USB_BUF_CTRL_AVAIL;
+
     ep->next_pid ^= 1;
 }
 
@@ -549,7 +562,15 @@ static uint8_t dev_addr = 0;
 static struct cdc_line_info __attribute((aligned(8))) cdc_line_info = { .dwDTERate = 115200, .bDataBits = 8 };
 _Static_assert(sizeof(cdc_line_info) == 7, "wtf");
 
-char get_dtr(void) {
+static char dtr_has_gone_low = 0;
+
+int usb_cdc_serial_dtr_has_gone_low(void) {
+    return *(volatile char *)&dtr_has_gone_low;
+}
+
+int usb_cdc_serial_dtr_is_high(void) {
+    dtr_has_gone_low = 0;
+
     if (!hack_has_elapsed) return 0;
     return (*(volatile uint8_t *)&cdc_line_state) & 0x1;
 }
@@ -563,35 +584,38 @@ static void usb_handle_setup_packet(void) {
     ep0_in->next_pid = 1;
     ep0_out->next_pid = 1;
 
-    if (CDC_SET_CONTROL_LINE_STATE == req) {
-        /* if the port is closed (DTR goes low...) */
-        if ((cdc_line_state & 0x01) && !(pkt->wValue & 0x01)) {
-            /* and the baud rate is 1200 bps... */
-            if (cdc_line_info.dwDTERate == 1200)
+    if (0x21 == req_direction) { /* host to device class interface */
+        if (CDC_SET_CONTROL_LINE_STATE == req) {
+            /* if the port is closed (DTR goes low...) */
+            if ((cdc_line_state & 0x01) && !(pkt->wValue & 0x01)) {
+                /* and the baud rate is 1200 bps... */
+                if (cdc_line_info.dwDTERate == 1200)
                 /* reset into bootloader */
-                rom_reset_usb_boot_extra(-1, 0, false);
+                    rom_reset_usb_boot_extra(-1, 0, false);
 
-            hack_has_elapsed = 0;
+                hack_has_elapsed = 0;
+                dtr_has_gone_low = 1;
+            }
+
+            else if (!(cdc_line_state & 0x01) && (pkt->wValue & 0x01)) {
+                /* hack: we need to wait some time between seeing dtr go high and letting
+                 calling code know about it */
+                sofnum_at_dtr_high = usb_hw->sof_rd;
+
+                usb_hw_set->inte = USB_INTE_DEV_SOF_BITS;
+            }
+
+            cdc_line_state = pkt->wValue & 0xFF;
+            usb_acknowledge_out_request();
         }
-
-        else if (!(cdc_line_state & 0x01) && (pkt->wValue & 0x01)) {
-            /* hack: we need to wait some time between seeing dtr go high and letting
-             calling code know about it */
-            sofnum_at_dtr_high = usb_hw->sof_rd;
-
-            usb_hw_set->inte = USB_INTE_DEV_SOF_BITS;
+        else if (CDC_SET_LINE_CODING == req) {
+            should_set_cdc_line_state = 1;
+            usb_start_out_transfer(ep0_out, MIN(pkt->wLength, sizeof(cdc_line_info)));
         }
-
-        cdc_line_state = pkt->wValue & 0xFF;
-        usb_acknowledge_out_request();
+        else
+        /* TODO: */
+            usb_acknowledge_out_request();
     }
-    else if (CDC_SET_LINE_CODING == req) {
-        should_set_cdc_line_state = 1;
-        usb_start_out_transfer(ep0_out, MIN(pkt->wLength, sizeof(cdc_line_info)));
-    }
-    else if (CDC_SEND_BREAK == req)
-    /* TODO: */
-        usb_acknowledge_out_request();
     else if (req_direction == USB_DIR_OUT) {
         if (req == USB_REQUEST_SET_ADDRESS) {
             /* send a zlp as address 0 first, then, when that is acknowledged, set the actual addr */
@@ -606,6 +630,7 @@ static void usb_handle_setup_packet(void) {
             usb_start_out_transfer(ep2_out, 64);
 
             enumerated = 1;
+            __dsb();
         }
         else usb_acknowledge_out_request();
     } else if (req_direction == USB_DIR_IN) {
@@ -640,7 +665,7 @@ void usb_cdc_serial_rx_rearm(void) {
 }
 
 int usb_cdc_serial_tx_still_sending(void) {
-    return !!(*(void * volatile *)&ep2_in->dpram_stop);
+    return !usb_cdc_serial_dtr_has_gone_low() && !!(*(void * volatile *)&ep2_in->dpram_stop);
 }
 
 void * usb_cdc_serial_tx_staging_area(const size_t size_wanted) {
@@ -653,6 +678,7 @@ const void * usb_cdc_serial_rx_staging_area(void) {
 }
 
 void usb_cdc_serial_tx_start(const size_t size) {
+    if (usb_cdc_serial_dtr_has_gone_low()) return;
     usb_double_buffered_in_transfer_start(ep2_in, size);
 }
 
@@ -694,6 +720,8 @@ static void usb_handle_buff_status(void) {
             unaligned_memcpy(&cdc_line_info, usb_dpram->ep0_buf_a, sizeof(cdc_line_info));
             should_set_cdc_line_state = 0;
 
+            /* force next pid because this is technically in response to a setup packet */
+            ep0_out->next_pid = 1;
             usb_acknowledge_out_request();
         }
     }
@@ -703,11 +731,12 @@ static void usb_handle_buff_status(void) {
         usb_hw_clear->buf_status = ep2_in_mask;
         remaining_buffers &= ~ep2_in_mask;
 
-        if (ep2_in->dpram_cursor != ep2_in->dpram_stop)
+        if (ep2_in->dpram_cursor != ep2_in->dpram_stop && !usb_cdc_serial_dtr_has_gone_low())
             usb_double_buffered_in_transfer_continue(ep2_in);
         else {
             ep2_in->dpram_cursor = NULL;
             ep2_in->dpram_stop = NULL;
+            __dsb();
         }
     }
 
@@ -756,8 +785,10 @@ void isr_usbctrl(void) {
         }
     }
 
-    if (usb_hw->sie_status & USB_SIE_STATUS_DATA_SEQ_ERROR_BITS)
-        usb_hw->sie_status = USB_SIE_STATUS_DATA_SEQ_ERROR_BITS;
+    if (usb_hw->sie_status & USB_SIE_STATUS_DATA_SEQ_ERROR_BITS) {
+        usb_hw_clear->sie_status = USB_SIE_STATUS_DATA_SEQ_ERROR_BITS;
+        seq_errors++;
+    }
 
     if (status ^ handled)
         panic("unhandled irq(s): 0x%x\n", (uint) (status ^ handled));
