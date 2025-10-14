@@ -164,15 +164,13 @@ struct cdc_line_info {
 #define CDC0_INTERFACE_ACM 0
 #define CDC0_INTERFACE_DATA 1
 
-unsigned char enumerated = 0;
-
 static unsigned char __attribute((aligned(8))) ep0_buf[64];
 
 static struct usb_endpoint_configuration {
     /* pointers to registers and places in special memory for this endpoint */
-    volatile uint32_t * ep_ctrl;
-    volatile uint32_t * ep_buf_ctrl;
-    unsigned char * dpram_start;
+    volatile uint32_t * const ep_ctrl;
+    volatile uint32_t * const ep_buf_ctrl;
+    unsigned char * const dpram_start;
 
     union {
         struct { unsigned char * dpram_cursor, * dpram_stop; };
@@ -180,30 +178,30 @@ static struct usb_endpoint_configuration {
     };
 
     /* we need this every time we set ep ctrl */
-    uint8_t transfer_type_bits;
+    const uint8_t transfer_type_bits;
 
     /* toggles on every packet (unless overridden for ep0) */
     unsigned char next_pid;
-} * ep0_out = &(struct usb_endpoint_configuration) {
+} * const ep0_out = &(struct usb_endpoint_configuration) {
     .transfer_type_bits = USB_TRANSFER_TYPE_CONTROL,
     .ep_buf_ctrl = &usb_dpram->ep_buf_ctrl[0].out,
     .dpram_start = usb_dpram->ep0_buf_a,
-}, * ep0_in = &(struct usb_endpoint_configuration) {
+}, * const ep0_in = &(struct usb_endpoint_configuration) {
     .transfer_type_bits = USB_TRANSFER_TYPE_CONTROL,
     .ep_buf_ctrl = &usb_dpram->ep_buf_ctrl[0].in,
     .dpram_start = usb_dpram->ep0_buf_a,
-}, * ep1_in = &(struct usb_endpoint_configuration) {
+}, * const ep1_in = &(struct usb_endpoint_configuration) {
     .transfer_type_bits = USB_TRANSFER_TYPE_INTERRUPT,
     /* note ep_ctrls count from one less than endpoint number */
     .ep_ctrl = &usb_dpram->ep_ctrl[0].in,
     .ep_buf_ctrl = &usb_dpram->ep_buf_ctrl[1].in,
     .dpram_start = usb_dpram->epx_data + 1 * 64,
-}, * ep2_out = &(struct usb_endpoint_configuration) {
+}, * const ep2_out = &(struct usb_endpoint_configuration) {
     .transfer_type_bits = USB_TRANSFER_TYPE_BULK,
     .ep_ctrl = &usb_dpram->ep_ctrl[1].out,
     .ep_buf_ctrl = &usb_dpram->ep_buf_ctrl[2].out,
     .dpram_start = usb_dpram->epx_data + 2 * 64,
-}, * ep2_in = &(struct usb_endpoint_configuration) {
+}, * const ep2_in = &(struct usb_endpoint_configuration) {
     .transfer_type_bits = USB_TRANSFER_TYPE_BULK,
     .ep_ctrl = &usb_dpram->ep_ctrl[1].in,
     .ep_buf_ctrl = &usb_dpram->ep_buf_ctrl[2].in,
@@ -214,6 +212,21 @@ static inline uint32_t usb_buffer_offset(volatile unsigned char * buf) {
     /* return offset within dpram of a given absolute pointer */
     return (uint32_t)buf ^ (uint32_t)usb_dpram;
 }
+
+void usb_cdc_serial_deinit(void) {
+    irq_set_enabled(USBCTRL_IRQ, false);
+    irq_clear(USBCTRL_IRQ);
+
+    /* reset peripheral */
+    reset_unreset_block_num_wait_blocking(RESET_USBCTRL);
+
+    hw_set_bits(&usb_hw->sie_ctrl, USB_SIE_CTRL_TRANSCEIVER_PD_BITS);
+}
+
+static unsigned hack_has_elapsed = 0;
+static uint8_t cdc_line_state;
+static struct cdc_line_info __attribute((aligned(8))) cdc_line_info;
+_Static_assert(sizeof(cdc_line_info) == 7, "wtf");
 
 void usb_cdc_serial_init(void) {
     /* temporarily disable this until below init is finished */
@@ -259,7 +272,9 @@ void usb_cdc_serial_init(void) {
     /* pull up on dp to indicate full speed */
     usb_hw_set->sie_ctrl = USB_SIE_CTRL_PULLUP_EN_BITS;
 
-    enumerated = 0;
+    memset(&cdc_line_info, 0, sizeof(cdc_line_info));
+    cdc_line_state = 0;
+    hack_has_elapsed = 0;
 
     /* make sure all writes to sram have finished before isr fires */
     __dsb();
@@ -551,16 +566,9 @@ static void usb_acknowledge_out_request(void) {
 }
 
 static unsigned sofnum_at_dtr_high = 0;
-static unsigned hack_has_elapsed = 0;
-
 static unsigned char should_set_cdc_line_state = 0;
-static uint8_t cdc_line_state;
-
 static unsigned char should_set_dev_addr = 0;
 static uint8_t dev_addr = 0;
-
-static struct cdc_line_info __attribute((aligned(8))) cdc_line_info = { .dwDTERate = 115200, .bDataBits = 8 };
-_Static_assert(sizeof(cdc_line_info) == 7, "wtf");
 
 static char dtr_has_gone_low = 0;
 
@@ -629,7 +637,6 @@ static void usb_handle_setup_packet(void) {
             /* indicate to host that ep2 out can receive */
             usb_start_out_transfer(ep2_out, 64);
 
-            enumerated = 1;
             __dsb();
         }
         else usb_acknowledge_out_request();
@@ -770,9 +777,11 @@ void isr_usbctrl(void) {
         handled |= USB_INTS_BUS_RESET_BITS;
         usb_hw_clear->sie_status = USB_SIE_STATUS_BUS_RESET_BITS;
 
+        memset(&cdc_line_info, 0, sizeof(cdc_line_info));
+        cdc_line_state = 0;
+        hack_has_elapsed = 0;
         dev_addr = 0;
         usb_hw->dev_addr_ctrl = 0;
-        enumerated = 0;
     }
 
     if (status & USB_INTS_DEV_SOF_BITS) {
