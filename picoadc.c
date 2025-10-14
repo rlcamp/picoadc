@@ -348,14 +348,18 @@ int main(void) {
 #endif
 
 #ifdef ENABLE_USB
-        char * line_out_termination = base64_encode(line_out_data, spectrum_quantized, F);
+        if (usb_cdc_serial_dtr_is_high()) {
+            /* wait until previous send finishes if necessary before touching buffer */
+            while (usb_cdc_serial_tx_still_sending()) yield();
 
-        /* finish line */
-        unaligned_memcpy(line_out_termination, "\r\n", 2);
+            char * line_out_termination = base64_encode(line_out_data, spectrum_quantized, F);
 
-        /* emit line to usb cdc serial */
-        if (usb_cdc_serial_dtr_is_high())
+            /* finish line */
+            unaligned_memcpy(line_out_termination, "\r\n", 2);
+
+            /* emit line to usb cdc serial */
             usb_cdc_serial_tx_start(line_out_termination + 2 - line_out);
+        }
 #endif
     }
 
