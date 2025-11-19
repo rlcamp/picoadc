@@ -277,7 +277,6 @@ int main(void) {
       a buffer of that length, including its zero termination */
     const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
     char * restrict const line_out = usb_cdc_serial_tx_staging_area(outlen);
-    if (!line_out) panic("usb dpram buffer overrun");
 
     /* write into first part of output line */
     const size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
