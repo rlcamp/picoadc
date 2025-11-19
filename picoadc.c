@@ -276,11 +276,6 @@ int main(void) {
     /* figure out the maximum length of each line of text that will be emitted and allocate
       a buffer of that length, including its zero termination */
     const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
-    char * restrict const line_out = usb_cdc_serial_tx_staging_area(outlen);
-
-    /* write into first part of output line */
-    const size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
-    char * line_out_data = line_out + off;
 #endif
 
     uint8_t * restrict const spectrum_quantized = malloc(sizeof(uint8_t) * F);
@@ -347,10 +342,15 @@ int main(void) {
 #endif
 
 #ifdef ENABLE_USB
-        if (usb_cdc_serial_dtr_is_high()) {
+        if (usb_cdc_serial_dtr_is_high()) do {
             /* wait until previous send finishes if necessary before touching buffer */
-            while (usb_cdc_serial_tx_still_sending()) yield();
+            while (usb_cdc_serial_tx_still_sending() && !usb_cdc_serial_dtr_has_gone_low()) yield();
+            if (usb_cdc_serial_dtr_has_gone_low()) break;
 
+            char * restrict const line_out = usb_cdc_serial_tx_staging_area(outlen);
+
+            const size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
+            char * line_out_data = line_out + off;
             char * line_out_termination = base64_encode(line_out_data, spectrum_quantized, F);
 
             /* finish line */
@@ -358,7 +358,7 @@ int main(void) {
 
             /* emit line to usb cdc serial */
             usb_cdc_serial_tx_start(line_out_termination + 2 - line_out);
-        }
+        } while(0);
 #endif
     }
 
