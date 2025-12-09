@@ -172,10 +172,7 @@ static struct usb_endpoint_configuration {
     volatile uint32_t * const ep_buf_ctrl;
     unsigned char * const dpram_start;
 
-    union {
-        struct { unsigned char * dpram_cursor, * dpram_stop; };
-        struct { const unsigned char * in_cursor, * in_stop; };
-    };
+    const unsigned char * in_started, * in_stop;
 
     /* we need this every time we set ep ctrl */
     const uint8_t transfer_type_bits;
@@ -208,7 +205,7 @@ static struct usb_endpoint_configuration {
     .dpram_start = usb_dpram->epx_data + 3 * 64,
 };
 
-static inline uint32_t usb_buffer_offset(volatile unsigned char * buf) {
+static inline uint32_t usb_buffer_offset(const volatile unsigned char * buf) {
     /* return offset within dpram of a given absolute pointer */
     return (uint32_t)buf ^ (uint32_t)usb_dpram;
 }
@@ -227,6 +224,7 @@ static unsigned hack_has_elapsed = 0;
 static uint8_t cdc_line_state;
 static struct cdc_line_info __attribute((aligned(8))) cdc_line_info;
 _Static_assert(sizeof(cdc_line_info) == 7, "wtf");
+static unsigned char rts_has_gone_low = 0;
 
 void usb_cdc_serial_init(void) {
     /* temporarily disable this until below init is finished */
@@ -275,6 +273,7 @@ void usb_cdc_serial_init(void) {
     memset(&cdc_line_info, 0, sizeof(cdc_line_info));
     cdc_line_state = 0;
     hack_has_elapsed = 0;
+    rts_has_gone_low = 0;
 
     /* make sure all writes to sram have finished before isr fires */
     __dsb();
@@ -304,25 +303,25 @@ void unaligned_memcpy(void * dstv, const void * restrict srcv, size_t count) {
 }
 
 static void usb_double_buffered_in_transfer_continue(struct usb_endpoint_configuration * ep) {
-    const size_t len_remaining = ep->dpram_stop - ep->dpram_cursor;
+    const size_t len_remaining = ep->in_stop - ep->in_started;
     if (len_remaining > 64) {
         const size_t len_now = len_remaining < 128 ? len_remaining : 128;
 
         const uint32_t val_lo = (64 | USB_BUF_CTRL_FULL |
-                                 (ep->dpram_cursor == ep->dpram_start ? USB_BUF_CTRL_SEL : 0) |
+                                 (ep->in_started == ep->dpram_start ? USB_BUF_CTRL_SEL : 0) |
                                  (ep->next_pid ? USB_BUF_CTRL_DATA1_PID : USB_BUF_CTRL_DATA0_PID));
 
         *ep->ep_ctrl = (EP_CTRL_ENABLE_BITS
                         | EP_CTRL_INTERRUPT_PER_DOUBLE_BUFFER
                         | (ep->transfer_type_bits << EP_CTRL_BUFFER_TYPE_LSB)
                         | EP_CTRL_DOUBLE_BUFFERED_BITS
-                        | usb_buffer_offset(ep->dpram_cursor));
-        ep->dpram_cursor += len_now;
+                        | usb_buffer_offset(ep->in_started));
+        ep->in_started += len_now;
 
         ep->next_pid ^= 1;
 
         const uint32_t val_hi = ((len_now - 64) | USB_BUF_CTRL_FULL |
-                                 (ep->dpram_cursor == ep->dpram_stop ? USB_BUF_CTRL_LAST : 0) |
+                                 (ep->in_started == ep->in_stop ? USB_BUF_CTRL_LAST : 0) |
                                  (ep->next_pid ? USB_BUF_CTRL_DATA1_PID : USB_BUF_CTRL_DATA0_PID));
 
         ep->next_pid ^= 1;
@@ -335,11 +334,11 @@ static void usb_double_buffered_in_transfer_continue(struct usb_endpoint_configu
         *ep->ep_ctrl = (EP_CTRL_ENABLE_BITS
                         | EP_CTRL_INTERRUPT_PER_BUFFER
                         | (ep->transfer_type_bits << EP_CTRL_BUFFER_TYPE_LSB)
-                        | usb_buffer_offset(ep->dpram_cursor));
+                        | usb_buffer_offset(ep->in_started));
 
-        const size_t len_now = ep->dpram_stop - ep->dpram_cursor;
+        const size_t len_now = ep->in_stop - ep->in_started;
 
-        ep->dpram_cursor += len_now;
+        ep->in_started += len_now;
 
         const uint32_t val_lo = (len_now | USB_BUF_CTRL_FULL | USB_BUF_CTRL_LAST |
                                  (ep->next_pid ? USB_BUF_CTRL_DATA1_PID : USB_BUF_CTRL_DATA0_PID));
@@ -351,24 +350,15 @@ static void usb_double_buffered_in_transfer_continue(struct usb_endpoint_configu
     }
 }
 
-static void usb_double_buffered_in_transfer_start(struct usb_endpoint_configuration * ep,
-                                                  const size_t len_total) {
-
-    ep->dpram_cursor = ep->dpram_start;
-    ep->dpram_stop = ep->dpram_cursor + len_total;
-
-    usb_double_buffered_in_transfer_continue(ep);
-}
-
 static void usb_single_buffered_in_transfer_continue(struct usb_endpoint_configuration * ep) {
-    const size_t len_remaining = ep->in_stop - ep->in_cursor;
+    const size_t len_remaining = ep->in_stop - ep->in_started;
     const uint16_t len_now = len_remaining < 64 ? len_remaining : 64;
 
     const uint32_t val = (len_now | USB_BUF_CTRL_FULL |
                           (ep->next_pid ? USB_BUF_CTRL_DATA1_PID : USB_BUF_CTRL_DATA0_PID));
 
-    unaligned_memcpy(ep->dpram_start, ep->in_cursor, len_now);
-    ep->in_cursor += len_now;
+    unaligned_memcpy(ep->dpram_start, ep->in_started, len_now);
+    ep->in_started += len_now;
 
     ep->next_pid ^= 1;
 
@@ -378,8 +368,8 @@ static void usb_single_buffered_in_transfer_continue(struct usb_endpoint_configu
 }
 
 static void usb_start_in_transfer(struct usb_endpoint_configuration *ep, const void * buf, const size_t len_total) {
-    ep->in_cursor = buf;
-    ep->in_stop = ep->in_cursor + len_total;
+    ep->in_started = buf;
+    ep->in_stop = ep->in_started + len_total;
 
     usb_single_buffered_in_transfer_continue(ep);
 }
@@ -572,6 +562,10 @@ static uint8_t dev_addr = 0;
 
 static char dtr_has_gone_low = 0;
 
+int usb_cdc_serial_rts_has_gone_low(void) {
+    return *(volatile char *)&rts_has_gone_low;
+}
+
 int usb_cdc_serial_dtr_has_gone_low(void) {
     return *(volatile char *)&dtr_has_gone_low;
 }
@@ -594,6 +588,10 @@ static void usb_handle_setup_packet(void) {
 
     if (0x21 == req_direction) { /* host to device class interface */
         if (CDC_SET_CONTROL_LINE_STATE == req) {
+            /* if rts was high and is now low... */
+            if ((cdc_line_state & 0x02) && !(pkt->wValue & 0x02))
+                rts_has_gone_low = 1;
+
             /* if the port is closed (DTR goes low...) */
             if ((cdc_line_state & 0x01) && !(pkt->wValue & 0x01)) {
                 /* and the baud rate is 1200 bps... */
@@ -672,21 +670,33 @@ void usb_cdc_serial_rx_rearm(void) {
 }
 
 int usb_cdc_serial_tx_still_sending(void) {
-    return !usb_cdc_serial_dtr_has_gone_low() && !!(*(void * volatile *)&ep2_in->dpram_stop);
+    return !!(*(void * volatile *)&ep2_in->in_stop);
 }
 
-void * usb_cdc_serial_tx_staging_area(const size_t size_wanted) {
-    if (ep2_in->dpram_start + size_wanted > usb_dpram->epx_data + 4096) return NULL;
+void * usb_cdc_serial_tx_acquire(const size_t size_wanted) {
+    if (ep2_in->dpram_start + size_wanted > usb_dpram->epx_data + 4096) panic("overflow");
+    if (usb_cdc_serial_tx_still_sending()) return NULL;
     return ep2_in->dpram_start;
+}
+
+void * usb_cdc_serial_tx_acquire_half(const size_t size_wanted) {
+    if (size_wanted > 1920) panic("overflow");
+    static unsigned char half = 0;
+    half = !half;
+    return ep2_in->dpram_start + (half ? 1920 : 0);
 }
 
 const void * usb_cdc_serial_rx_staging_area(void) {
     return ep2_out->dpram_start;
 }
 
-void usb_cdc_serial_tx_start(const size_t size) {
+void usb_cdc_serial_tx_start(const void * pointer, const size_t size) {
     if (usb_cdc_serial_dtr_has_gone_low()) return;
-    usb_double_buffered_in_transfer_start(ep2_in, size);
+
+    ep2_in->in_started = pointer;
+    ep2_in->in_stop = ep2_in->in_started + size;
+
+    usb_double_buffered_in_transfer_continue(ep2_in);
 }
 
 static unsigned usb_get_endpoint_buff_status_mask(uint8_t addr) {
@@ -702,7 +712,7 @@ static void usb_handle_buff_status(void) {
         usb_hw_clear->buf_status = ep0_in_mask;
         remaining_buffers &= ~ep0_in_mask;
 
-        if (ep0_in->in_cursor != ep0_in->in_stop)
+        if (ep0_in->in_started != ep0_in->in_stop)
             usb_single_buffered_in_transfer_continue(ep0_in);
         else {
             if (should_set_dev_addr) {
@@ -713,7 +723,7 @@ static void usb_handle_buff_status(void) {
             /* receive a zlp from host */
                 usb_start_out_transfer(ep0_out, 0);
 
-            ep0_in->in_cursor = NULL;
+            ep0_in->in_started = NULL;
             ep0_in->in_stop = NULL;
         }
     }
@@ -738,11 +748,11 @@ static void usb_handle_buff_status(void) {
         usb_hw_clear->buf_status = ep2_in_mask;
         remaining_buffers &= ~ep2_in_mask;
 
-        if (ep2_in->dpram_cursor != ep2_in->dpram_stop && !usb_cdc_serial_dtr_has_gone_low())
+        if (ep2_in->in_started != ep2_in->in_stop && !usb_cdc_serial_dtr_has_gone_low())
             usb_double_buffered_in_transfer_continue(ep2_in);
         else {
-            ep2_in->dpram_cursor = NULL;
-            ep2_in->dpram_stop = NULL;
+            ep2_in->in_started = NULL;
+            ep2_in->in_stop = NULL;
             __dsb();
         }
     }
@@ -780,6 +790,7 @@ void isr_usbctrl(void) {
         memset(&cdc_line_info, 0, sizeof(cdc_line_info));
         cdc_line_state = 0;
         hack_has_elapsed = 0;
+        rts_has_gone_low = 0;
         dev_addr = 0;
         usb_hw->dev_addr_ctrl = 0;
     }
