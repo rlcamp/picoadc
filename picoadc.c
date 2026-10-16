@@ -198,13 +198,10 @@ int main(void) {
 
     adc_dma_init();
 
-#ifdef ENABLE_USB
-    usb_cdc_serial_init();
-#endif
-
     /* turn off clocks to a bunch of stuff we aren't using, saves about 4 mW */
     clocks_hw->wake_en1 = (CLOCKS_WAKE_EN1_BITS &
-                           ~(CLOCKS_WAKE_EN1_CLK_SYS_UART1_BITS |
+                           ~(CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS |
+                             CLOCKS_WAKE_EN1_CLK_SYS_UART1_BITS |
                              CLOCKS_WAKE_EN1_CLK_PERI_UART1_BITS |
                              CLOCKS_WAKE_EN1_CLK_SYS_UART0_BITS |
                              CLOCKS_WAKE_EN1_CLK_PERI_UART0_BITS |
@@ -226,16 +223,18 @@ int main(void) {
                              CLOCKS_WAKE_EN0_CLK_SYS_HSTX_BITS |
                              CLOCKS_WAKE_EN0_CLK_HSTX_BITS));
 
-#ifndef ENABLE_USB
-    clocks_hw->wake_en1 &= ~CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS;
-#endif
-
     /* make sure we don't clock anything in sleep that wasn't clocked in wake */
     clocks_hw->sleep_en1 = clocks_hw->wake_en1;
     clocks_hw->sleep_en0 = clocks_hw->wake_en0;
 
 #ifdef ENABLE_LCD
     ili9341_scrolling_init();
+#endif
+
+#ifdef ENABLE_USB
+    clocks_hw->wake_en1 |= CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS;
+    clocks_hw->sleep_en1 |= CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS;
+    usb_cdc_serial_init();
 #endif
 
     /* fft length. we use each chunk twice, first as the final 50% of an fft frame, then
