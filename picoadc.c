@@ -294,6 +294,8 @@ int main(void) {
     const float out_offset = -256.0f * out_scale;
     const float one_over_out_scale = 1.0f / out_scale;
 
+    unsigned usb_session = 0;
+
     /* inner loop over chunks of data */
     while (1) {
         /* wait until there is a new chunk of data. note the forced volatile read of a not
@@ -343,7 +345,7 @@ int main(void) {
 #endif
 
 #ifdef ENABLE_USB
-        if (usb_cdc_serial_dtr_is_high()) do {
+        if (usb_cdc_serial_dtr_is_high(&usb_session)) do {
             char * restrict const line_out = usb_cdc_serial_tx_acquire_half(outlen);
 
             const size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
@@ -351,11 +353,11 @@ int main(void) {
             char * line_out_termination = base64_encode(line_out_data, spectrum_quantized, F);
 
             /* finish line */
-            unaligned_memcpy(line_out_termination, "\r\n", 2);
+            memcpy_to_unaligned(line_out_termination, "\r\n", 2);
 
             /* wait until previous send finishes if necessary before touching buffer */
-            while (usb_cdc_serial_tx_still_sending() && !usb_cdc_serial_dtr_has_gone_low()) yield();
-            if (usb_cdc_serial_dtr_has_gone_low()) break;
+            while (usb_cdc_serial_tx_still_sending() && !usb_cdc_serial_dtr_has_gone_low(usb_session)) yield();
+            if (usb_cdc_serial_dtr_has_gone_low(usb_session)) break;
 
             /* emit line to usb cdc serial */
             usb_cdc_serial_tx_start(line_out, line_out_termination + 2 - line_out);
