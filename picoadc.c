@@ -196,8 +196,6 @@ int main(void) {
      note that this requires the USB PLL to be left enabled even if not used otherwise */
     set_sys_clock_48mhz();
 
-    adc_dma_init();
-
     /* turn off clocks to a bunch of stuff we aren't using, saves about 4 mW */
     clocks_hw->wake_en1 = (CLOCKS_WAKE_EN1_BITS &
                            ~(CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS |
@@ -226,6 +224,8 @@ int main(void) {
     /* make sure we don't clock anything in sleep that wasn't clocked in wake */
     clocks_hw->sleep_en1 = clocks_hw->wake_en1;
     clocks_hw->sleep_en0 = clocks_hw->wake_en0;
+
+    adc_dma_init();
 
 #ifdef ENABLE_LCD
     ili9341_scrolling_init();
