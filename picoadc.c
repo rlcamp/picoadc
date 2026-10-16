@@ -11,15 +11,11 @@
 #include "RP2350.h"
 
 #include "fft_anywhere.h"
-#ifdef ENABLE_LCD
 #include "rp2_ili9341_scrolling.h"
-#endif
 
-#ifdef ENABLE_USB
 #include "rp2350_usb_cdc_serial.h"
 #include <stdio.h>
 #include <string.h>
-#endif
 
 /* c standard includes */
 #include <math.h>
@@ -191,6 +187,23 @@ char * base64_encode(char * dest, const void * plainv, const size_t plain_size) 
         return (char *)encoded;
 }
 
+/* interpret not defined as false, defined to 0 as false, defined but empty as true */
+#if ENABLE_USB
+#undef ENABLE_USB
+#define ENABLE_USB (1)
+#else
+#undef ENABLE_USB
+#define ENABLE_USB (0)
+#endif
+
+#if ENABLE_LCD
+#undef ENABLE_LCD
+#define ENABLE_LCD (1)
+#else
+#undef ENABLE_LCD
+#define ENABLE_LCD (0)
+#endif
+
 int main(void) {
     /* this is not a terribly cpu intensive program, so leave the main clock at 48 MHz
      note that this requires the USB PLL to be left enabled even if not used otherwise */
@@ -227,15 +240,14 @@ int main(void) {
 
     adc_dma_init();
 
-#ifdef ENABLE_LCD
-    ili9341_scrolling_init();
-#endif
+    if (ENABLE_LCD)
+        ili9341_scrolling_init();
 
-#ifdef ENABLE_USB
-    clocks_hw->wake_en1 |= CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS;
-    clocks_hw->sleep_en1 |= CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS;
-    usb_cdc_serial_init();
-#endif
+    if (ENABLE_USB) {
+        clocks_hw->wake_en1 |= CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS;
+        clocks_hw->sleep_en1 |= CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS;
+        usb_cdc_serial_init();
+    }
 
     /* fft length. we use each chunk twice, first as the final 50% of an fft frame, then
      as the initial 50% of the following fft frame */
@@ -259,7 +271,6 @@ int main(void) {
     float complex * restrict const scratch_out = malloc(sizeof(float complex) * T / 2);
     float * restrict const window = malloc(sizeof(float) * (T / 2 + 1));
 
-#if ENABLE_USB
     const float fs = SAMPLE_RATE_NUMERATOR / (float)sample_rate_denominator;
 
     /* the actual resulting pixel spacings, in frequency and time respectively */
@@ -273,7 +284,6 @@ int main(void) {
     /* TODO: compile time assert outlen is <= 1920 */
 
     unsigned usb_session = 0;
-#endif
 
     uint8_t * restrict const spectrum_quantized = malloc(sizeof(uint8_t) * F);
 
@@ -330,16 +340,14 @@ int main(void) {
             spectrum_quantized[iw] = fminf(255.0f, fmaxf(0.0f, (dB - out_offset) * one_over_out_scale + 0.5f));
         }
 
-#ifdef ENABLE_LCD
         /* send the newest line of pixels to the display, and scroll it by one pixel. this
          is partially nonblocking, i.e. the function call will return after it has sent the
          command bytes and has STARTED to send the 240 new pixel values, and will block
          if the previous transaction is still ongoing */
-        ili9341_write_row_and_scroll(spectrum_quantized);
-#endif
+        if (ENABLE_LCD)
+            ili9341_write_row_and_scroll(spectrum_quantized);
 
-#ifdef ENABLE_USB
-        if (usb_cdc_serial_dtr_is_high(&usb_session)) do {
+        if (ENABLE_USB && usb_cdc_serial_dtr_is_high(&usb_session)) do {
             char * restrict const line_out = usb_cdc_serial_tx_acquire_half(outlen);
 
             const size_t off = snprintf(line_out, outlen, "%.5f,%.5f,", df, dt);
@@ -356,7 +364,6 @@ int main(void) {
             /* emit line to usb cdc serial */
             usb_cdc_serial_tx_start(line_out, line_out_termination + 2 - line_out);
         } while(0);
-#endif
     }
 
     /* not reached */
