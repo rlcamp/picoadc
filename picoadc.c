@@ -277,6 +277,8 @@ int main(void) {
       a buffer of that length, including its zero termination */
     const size_t outlen = sizeof("000.00000,000.00000,\r\n") + strlen_spectrum_encoded;
     /* TODO: compile time assert outlen is <= 1920 */
+
+    unsigned usb_session = 0;
 #endif
 
     uint8_t * restrict const spectrum_quantized = malloc(sizeof(uint8_t) * F);
@@ -293,8 +295,6 @@ int main(void) {
     const float out_scale = 0.375f;
     const float out_offset = -256.0f * out_scale;
     const float one_over_out_scale = 1.0f / out_scale;
-
-    unsigned usb_session = 0;
 
     /* inner loop over chunks of data */
     while (1) {
