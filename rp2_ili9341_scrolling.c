@@ -4,6 +4,7 @@
 #include "hardware/spi.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
+#include "hardware/clocks.h"
 
 #define ILI9341_SWRESET 0x01
 #define ILI9341_SLPOUT 0x11
@@ -114,11 +115,15 @@ static uint16_t rgb565(const uint8_t r, const uint8_t g, const uint8_t b) {
 static uint16_t mapped[240];
 
 void ili9341_scrolling_init(void) {
+    /* turn on clocks for stuff we need */
+    clocks_hw->wake_en1 |= (CLOCKS_WAKE_EN1_CLK_SYS_SPI0_BITS | CLOCKS_WAKE_EN1_CLK_PERI_SPI0_BITS | CLOCKS_WAKE_EN1_CLK_SYS_TIMER0_BITS);
+    clocks_hw->sleep_en1 |= (CLOCKS_SLEEP_EN1_CLK_SYS_SPI0_BITS | CLOCKS_SLEEP_EN1_CLK_PERI_SPI0_BITS);
+
     for (size_t ic = 0; ic < 256; ic++)
         colormap_rgb565_swapped[ic] = __builtin_bswap16(rgb565(colormap[ic][0], colormap[ic][1], colormap[ic][2]));
 
     /* wait until power has been on for a bit */
-    sleep_ms(150);
+    for (unsigned t0 = timer_hw->timerawl; timer_hw->timerawl - t0 < 150000; );
 
     spi_init(spi0, 8000000);
     /* use pins 16, 17, 18, 19 for DC, CS, SCK, MOSI espectively */

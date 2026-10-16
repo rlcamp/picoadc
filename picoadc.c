@@ -198,10 +198,6 @@ int main(void) {
 
     adc_dma_init();
 
-#ifdef ENABLE_LCD
-    ili9341_scrolling_init();
-#endif
-
 #ifdef ENABLE_USB
     usb_cdc_serial_init();
 #endif
@@ -230,11 +226,6 @@ int main(void) {
                              CLOCKS_WAKE_EN0_CLK_SYS_HSTX_BITS |
                              CLOCKS_WAKE_EN0_CLK_HSTX_BITS));
 
-#ifndef ENABLE_LCD
-    clocks_hw->wake_en1 &= ~(CLOCKS_WAKE_EN1_CLK_SYS_SPI0_BITS |
-                             CLOCKS_WAKE_EN1_CLK_PERI_SPI0_BITS);
-#endif
-
 #ifndef ENABLE_USB
     clocks_hw->wake_en1 &= ~CLOCKS_WAKE_EN1_CLK_SYS_USBCTRL_BITS;
 #endif
@@ -242,6 +233,10 @@ int main(void) {
     /* make sure we don't clock anything in sleep that wasn't clocked in wake */
     clocks_hw->sleep_en1 = clocks_hw->wake_en1;
     clocks_hw->sleep_en0 = clocks_hw->wake_en0;
+
+#ifdef ENABLE_LCD
+    ili9341_scrolling_init();
+#endif
 
     /* fft length. we use each chunk twice, first as the final 50% of an fft frame, then
      as the initial 50% of the following fft frame */
