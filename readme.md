@@ -12,7 +12,7 @@ These assume a vanilla ARM64 Mac running Sonoma, with Xcode or at least its comm
 
 ### Build this code
 
-- `mkdir -p build && cd build && cmake .. -DPICO_BOARD=pico2 && cd ..`
+- `./find_prerequisites_and_invoke_cmake.sh`
 - `make -C build -j4`
 
 ### Upload and run this code
